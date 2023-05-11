@@ -1,0 +1,600 @@
+---
+output: 
+  html_document: 
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+---
+
+
+# 20211009_10x_LY sc10x               
+
+only ILC2 selected            
+(without the upper left CC part)                
+(which could be mixed with other celltypes like stromal)          
+
+
+```{r message=FALSE, warning=FALSE}
+source("../../../analysis.10x.r")
+```
+
+## subset ILC2          
+
+### processed obj           
+
+```{r}
+GEX.seur.raw <- readRDS("../analysis_1101/sc10x.GEX.seur.pre1105.rds")
+GEX.seur.raw
+```
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur.raw, reduction = "umap", group.by = "seurat_clusters",label = T, repel = F, label.size = 3.5) +
+  DimPlot(GEX.seur.raw, reduction = "umap", group.by = "preAnno_2",label = T, repel = F, label.size = 3.2)
+```
+
+only cluster_1,3,4,5 selected              
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur.raw, reduction = "umap", group.by = "seurat_clusters",label = T, repel = F, label.size = 3.5) +
+  FeaturePlot(GEX.seur.raw, reduction = "umap", features = "percent.mt")
+```
+
+#### check some cutoffs          
+
+if could exclude those little group of ILC2 cells with high mito and low nFeature             
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur.raw, reduction = "umap", group.by = "seurat_clusters",label = T, repel = F, label.size = 3.5) +
+  FeaturePlot(subset(GEX.seur.raw, subset=percent.mt <7.5)
+              , reduction = "umap", features = "percent.mt")
+```
+
+```{r fig.width=12,fig.height=4.5}
+FeaturePlot(GEX.seur.raw, reduction = "umap", features = c("nFeature_RNA","nCount_RNA"))
+```
+
+```{r fig.width=12,fig.height=4.5}
+FeaturePlot(subset(GEX.seur.raw, subset= nCount_RNA < 25000 & nFeature_RNA < 4500 & nFeature_RNA > 1000 & percent.mt < 7.5), 
+            reduction = "umap", features = c("nFeature_RNA","nCount_RNA"))
+```
+
+### only ILC2          
+
+```{r}
+GEX.seur <- subset(GEX.seur.raw, subset = seurat_clusters %in% c(1,3,4,5))
+GEX.seur <- subset(GEX.seur, subset= nCount_RNA < 16000 & nFeature_RNA < 3600 & nFeature_RNA > 1000 & percent.mt < 7.5)
+GEX.seur <- subset(GEX.seur, features = rownames(GEX.seur)[rowSums(GEX.seur@assays[['RNA']]@data > 0)>=3])
+GEX.seur
+```
+
+```{r}
+quantile(GEX.seur$nFeature_RNA,prob=seq(0,1,0.025))
+```
+
+         
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur, reduction = "umap", group.by = "preAnno_1",label = F, repel = F, label.size = 3.5) +
+  DimPlot(GEX.seur, reduction = "umap", group.by = "preAnno_2",label = F, repel = F, label.size = 3.2)
+```
+
+#### check the data        
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur, reduction = "umap", group.by = "DoubletFinder0.1",label = F, repel = F, label.size = 3.5) +
+  FeaturePlot(GEX.seur, reduction = "umap", features = "percent.mt")
+```
+
+```{r fig.width=10,fig.height=4}
+plota <- FeatureScatter(GEX.seur, feature1 = "nCount_RNA", feature2 = "percent.mt", group.by = "orig.ident") + 
+             coord_cartesian(xlim =c(0, 30000), ylim = c(0, 10))
+plotb <- FeatureScatter(GEX.seur, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", group.by = "orig.ident") + 
+             coord_cartesian(xlim =c(0, 30000), ylim = c(0, 5000))
+plota + plotb
+```
+```{r fig.width=12,fig.height=4.5}
+FeaturePlot(GEX.seur, reduction = "umap", features = c("nFeature_RNA","nCount_RNA"))
+```
+
+```{r fig.width=12,fig.height=4.5}
+FeaturePlot(subset(GEX.seur, subset= nCount_RNA < 16000 & nFeature_RNA < 3200 & nFeature_RNA > 1000 & percent.mt < 7.5), 
+            reduction = "umap", features = c("nFeature_RNA","nCount_RNA"))
+```
+```{r}
+VlnPlot(GEX.seur, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0.1, group.by = "SP.info")
+```
+
+```{r}
+VlnPlot(GEX.seur, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0.1, group.by = "FB.info")
+```
+
+```{r fig.width=12,fig.height=6}
+DimPlot(GEX.seur, group.by = "FB.info", split.by = "FB.info", ncol = 4,
+        cols = c("#05BE78","#5ECDF2","#739BDD","#B7E16F","#87C0C9","#7756FA","#9855B9","#6F9920"))
+```
+
+```{r fig.width=12.6,fig.height=4.5}
+DimPlot(GEX.seur, group.by = "SP.info", split.by = "SP.info", ncol = 3)
+```
+
+```{r fig.height=20, fig.width=12}
+genes_to_check <- c("Fcer1g","Klrb1c","Ncr1","Il22",
+                    "Ccr6","Tbx21","Ifng","Eomes",
+                    "Gata3","Il1rl1","Il13","Il17a",
+                    "Il4","Il5","Klrg1","Rorc",
+                    "Il7r","Thy1","Kdm6b","Ptprc",
+                    "Cd3d","Cd3g","Cd4",
+                    #"Cd8a",
+                    "Trac","Trdc","Epcam","Pecam1","Siglech",
+                    "Hist1h1b","Top2a","Mcm6","Mki67")
+
+FeaturePlot(GEX.seur, features = genes_to_check, ncol = 4)
+```
+
+## re-clustering         
+
+```{r paged.print=FALSE}
+# remove unwanted metadata
+GEX.seur@meta.data <- GEX.seur@meta.data[,c(1:8,12,14,15:17)]
+head(GEX.seur@meta.data)
+```
+
+```{r fig.width= 8, fig.height=3.2}
+plota <- FeatureScatter(GEX.seur, feature1 = "nCount_RNA", feature2 = "percent.mt", group.by = "orig.ident")  + 
+             coord_cartesian(xlim =c(0, 20000), ylim = c(0, 10))
+plotb <- FeatureScatter(GEX.seur, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", group.by = "orig.ident") + 
+             coord_cartesian(xlim =c(0, 20000), ylim = c(0, 4000))
+plota + plotb
+```
+
+```{r fig.width=7,fig.height=4}
+sl_stat <- table(GEX.seur$FB.info)
+barplot(sl_stat,ylim = c(0,2200),col = c("#05BE78","#5ECDF2","#739BDD","#B7E16F","#87C0C9","#7756FA","#9855B9","#6F9920"),
+        main = "Feature Barcode statistics, only ILC2",cex.names = 0.75)
+text(x=1:10*1.2-0.45,y=sl_stat+125,paste0(sl_stat,"\n",100*round(as.numeric(sl_stat/sum(sl_stat)),4),"%"),cex = 0.75)
+```
+
+```{r fig.height=6, message=FALSE, warning=FALSE, fig.width=15}
+GEX.seur <- FindVariableFeatures(GEX.seur, selection.method = "vst", nfeatures = 800)
+
+# Identify the 10 most highly variable genes
+#top10 <- head(VariableFeatures(GEX.seur), 10)
+top40 <- head(VariableFeatures(GEX.seur), 40)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(GEX.seur)
+plot2 <- LabelPoints(plot = plot1, points = top40, repel = T)
+plot1 + plot2
+```
+```{r}
+top40
+```
+
+```{r}
+GEX.seur <- ScaleData(GEX.seur, features = rownames(GEX.seur))
+```
+### PCA       
+
+```{r}
+# exclude MT genes  
+MT_gene <- grep("^mt-",rownames(GEX.seur),value = T)
+Ribo_gene <- grep("^Rpl|^Rps", rownames(GEX.seur),value = T)
+GEX.seur <- RunPCA(GEX.seur, features = setdiff(VariableFeatures(object = GEX.seur),c(MT_gene,Ribo_gene)))
+```
+
+```{r fig.width=8.2, fig.height=3.2}
+DimPlot(GEX.seur, reduction = "pca",dims = 1:2, group.by = "preAnno_1") +
+  DimPlot(GEX.seur, reduction = "pca",dims = 3:4, group.by = "preAnno_1")
+```
+
+```{r fig.width=8.2, fig.height=3.2}
+DimPlot(GEX.seur, reduction = "pca",dims = 1:2, group.by = "preAnno_2") +
+  DimPlot(GEX.seur, reduction = "pca",dims = 3:4, group.by = "preAnno_2")
+```
+
+
+```{r pcsheat,fig.width=9,fig.height=12}
+DimHeatmap(GEX.seur, dims = 1:24, cells = 1500, balanced = TRUE,ncol = 4)
+```
+
+
+##### decide PCs to use          
+     
+```{r}
+ElbowPlot(GEX.seur,ndims = 24)
+```
+would take PCs 1-15 for next  
+
+```{r}
+PCs <- 1:15
+GEX.seur <- FindNeighbors(GEX.seur, dims = PCs,k.param = 80)
+GEX.seur <- FindClusters(GEX.seur,  resolution = 0.6, method = 'igraph')
+```
+
+### tsne/umap            
+
+
+```{r}
+#GEX.seur <- RunTSNE(GEX.seur, dims=PCs, max_iter = 2000)   
+#GEX.seur <- RunUMAP(GEX.seur, dims=PCs, n.neighbors = 80) 
+```
+
+```{r eval=FALSE, include=FALSE}
+saveRDS(GEX.seur, "adv_1110.GEX.seur_ILC2.afterTSNE.rds")
+```
+
+```{r include=FALSE}
+GEX.seur <- readRDS("adv_1110.GEX.seur_ILC2.afterTSNE.rds")
+```
+
+```{r eval=FALSE, include=FALSE, paged.print=FALSE}
+head(GEX.seur@meta.data)
+```
+
+
+```{r fig.width=9.2,fig.height=3.2}
+DimPlot(GEX.seur, reduction = "tsne", label = T) + DimPlot(GEX.seur, reduction = "umap", label = T)
+```
+
+
+### check the data        
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur, reduction = "umap", group.by = "DoubletFinder0.1",label = F, repel = F, label.size = 3.5) +
+  FeaturePlot(GEX.seur, reduction = "umap", features = "percent.mt")
+```
+
+```{r fig.width=12,fig.height=4.5}
+FeaturePlot(GEX.seur, reduction = "umap", features = c("nFeature_RNA","nCount_RNA"))
+```
+
+```{r}
+VlnPlot(GEX.seur, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0.1, group.by = "SP.info")
+```
+
+```{r}
+VlnPlot(GEX.seur, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0.1, group.by = "FB.info")
+```
+
+```{r fig.width=12,fig.height=5.2}
+DimPlot(GEX.seur, group.by = "FB.info", split.by = "FB.info", ncol = 4,
+        cols = c("#05BE78","#5ECDF2","#739BDD","#B7E16F","#87C0C9","#7756FA","#9855B9","#6F9920"))
+```
+
+```{r fig.width=12,fig.height=3.6}
+DimPlot(GEX.seur, group.by = "SP.info", split.by = "SP.info", ncol = 3)
+```
+
+### check markers           
+
+```{r fig.width=4.8, fig.height=5.6}
+DotPlot(GEX.seur, features = genes_to_check[genes_to_check %in% rownames(GEX.seur)],
+             assay='RNA' , group.by = "seurat_clusters" )  + coord_flip()
+```
+
+```{r fig.height=18, fig.width=12}
+genes_to_check <- c("Fcer1g","Klrb1c","Ncr1","Il22",
+                    "Ccr6","Tbx21","Ifng","Eomes",
+                    "Gata3","Il1rl1","Il13","Il17a",
+                    "Il4","Il5","Klrg1","Rorc",
+                    "Il7r","Thy1","Kdm6b","Ptprc",
+                    "Cd3d","Cd3g","Cd4",
+                    #"Cd8a",
+                    "Trac","Trdc","Epcam","Pecam1","Siglech",
+                    "Hist1h1b","Top2a","Mcm6","Mki67")
+
+FeaturePlot(GEX.seur, features = genes_to_check, ncol = 4)
+```
+
+
+```{r fig.width=4.5, fig.height=3.6}
+# 
+genes_nature2017 <- c("Tbx21","Ifng","Ccl5","Il12rb1",
+                      "Gata3","Il1rl1","Il5","Il13",
+                      "Rorc","Il17a","Ahr","Il23r")
+
+DotPlot(GEX.seur, features = genes_nature2017[genes_nature2017 %in% rownames(GEX.seur)],
+             assay='RNA' , group.by = "seurat_clusters" )  + coord_flip()
+```
+
+```{r fig.height=6.75, fig.width=12}
+FeaturePlot(GEX.seur, features = genes_nature2017, ncol = 4)
+```
+
+### find markers                      
+
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+#GEX.markers.ILC2_adv <- FindAllMarkers(GEX.seur, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.1,
+#                                  test.use = "MAST")
+GEX.markers.ILC2_adv <- read.table("GEX.markers.ILC2_adv.1110.csv", header = TRUE, sep = ",")
+
+markers.top16 <- GEX.markers.ILC2_adv %>% group_by(cluster) %>% filter(avg_log2FC>0.25)  %>% top_n(n = 16, wt = avg_log2FC)
+markers.top16
+
+#GEX.markers.ILC2_pre %>% group_by(cluster) %>% filter(pct.1 > 0.2 & pct.2 <0.1) %>% top_n(n = 8, wt = avg_log2FC)
+#GEX.markers.ILC2_pre %>% group_by(cluster) %>% top_n(n = 80, wt = avg_log2FC) %>% filter(gene %in% c("Top2a","Mki67") )
+```
+
+```{r eval=FALSE, include=FALSE}
+write.table(GEX.markers.ILC2_adv, 
+            "GEX.markers.ILC2_adv.1110.csv", 
+            col.names = TRUE,
+            row.names = FALSE,
+            quote = F,
+            sep = ",")
+```
+
+
+```{r fig.width=4.5, fig.height=12}
+# 
+DotPlot(GEX.seur, features = markers.top16[!duplicated(markers.top16$gene),"gene"],
+             assay='RNA' , group.by = "seurat_clusters" )  + coord_flip()
+```
+
+```{r fig.width=12,fig.height=54}
+FeaturePlot(GEX.seur, features = markers.top16$gene[1:96],
+            reduction = 'umap')
+```
+
+
+```{r fig.width=12,fig.height=54}
+VlnPlot(GEX.seur, features = markers.top16$gene[1:96],
+            group.by = "seurat_clusters")
+```
+
+```{r}
+GEX.seur$Anno_ILC2 <- factor(paste0("ILC2_",as.character(GEX.seur$seurat_clusters)),
+                             levels = paste0("ILC2_",c(0,4,1,5,2,3)))
+```
+
+
+
+```{r fig.width=12, fig.height=12}
+marker.new <- c((markers.top16 %>% filter(cluster==0))$gene,
+                (markers.top16 %>% filter(cluster==4))$gene,
+                (markers.top16 %>% filter(cluster==1))$gene,
+                (markers.top16 %>% filter(cluster==5))$gene,
+                (markers.top16 %>% filter(cluster==2))$gene,
+                (markers.top16 %>% filter(cluster==3))$gene)
+p.heat_top16 <- DoHeatmap(GEX.seur , group.by = "Anno_ILC2", 
+             features = marker.new) +
+             NoLegend() + labs(title = "ILC2_newclusters top16\n")
+p.heat_top16
+```
+
+```{r fig.width=12, fig.height=12}
+marker.top80 <- c((GEX.markers.ILC2_adv %>% group_by(cluster) %>% filter(avg_log2FC >0.25) %>% top_n(n = 80, wt = avg_log2FC) %>% filter(cluster==0))$gene,
+                (GEX.markers.ILC2_adv %>% group_by(cluster) %>% filter(avg_log2FC >0.25) %>% top_n(n = 80, wt = avg_log2FC) %>% filter(cluster==4))$gene,
+                (GEX.markers.ILC2_adv %>% group_by(cluster) %>% filter(avg_log2FC >0.25) %>% top_n(n = 80, wt = avg_log2FC) %>% filter(cluster==1))$gene,
+                (GEX.markers.ILC2_adv %>% group_by(cluster) %>% filter(avg_log2FC >0.25) %>% top_n(n = 80, wt = avg_log2FC) %>% filter(cluster==5))$gene,
+                (GEX.markers.ILC2_adv %>% group_by(cluster) %>% filter(avg_log2FC >0.25) %>% top_n(n = 80, wt = avg_log2FC) %>% filter(cluster==2))$gene,
+                (GEX.markers.ILC2_adv %>% group_by(cluster) %>% filter(avg_log2FC >0.25) %>% top_n(n = 80, wt = avg_log2FC) %>% filter(cluster==3))$gene)
+p.heat_top80 <- DoHeatmap(GEX.seur , group.by = "Anno_ILC2", 
+             features = marker.top80) +
+             NoLegend() + labs(title = "ILC2_newclusters top80\n")+ theme( axis.text.y = element_text( size = 4 ))
+p.heat_top80
+```
+
+
+```{r eval=FALSE, include=FALSE}
+ggsave("Doheatmap.ILC2newclusters_top16.pdf",
+       plot = p.heat_top16,
+       width = 12,
+       height = 12)
+ggsave("Doheatmap.ILC2newclusters_top80.pdf",
+       plot = p.heat_top80,
+       width = 12,
+       height = 12)
+```
+
+
+## condition comparison                                  
+
+
+### DEGs           
+
+
+```{r message=TRUE, warning=TRUE, include=FALSE}
+# find DEGs in all clusters for 'cKO vs CTL'
+#Idents(GEX.seur) <- "SP.info"
+
+names_adv <- levels(GEX.seur$Anno_ILC2)
+#GEX.DEGs_adv <- list()
+#for(nn in names_adv){
+#  GEX.DEGs_adv[[nn]] <- FindAllMarkers(subset(GEX.seur, subset = Anno_ILC2 == nn),
+#                                         only.pos = TRUE, 
+#                                         min.pct = 0.1, 
+#                                         logfc.threshold = 0.25,
+#                                         test.use = "MAST")
+#}
+#for(nn in names_adv){
+#  GEX.DEGs_adv[[nn]]$Anno_ILC2 <- nn
+#}
+Idents(GEX.seur) <- "Anno_ILC2"
+
+GEX.DEGs_adv <- readRDS("GEX.DEGs.ILC2_adv.rds")
+```
+
+```{r eval=FALSE, include=FALSE}
+# save DEG result
+saveRDS(GEX.DEGs_adv, "GEX.DEGs.ILC2_adv.rds")
+
+# save as datafrmae
+GEX.DEGs_adv.df <- data.frame()
+for(nn in names_adv){
+  GEX.DEGs_adv.df <- rbind(GEX.DEGs_adv.df,GEX.DEGs_adv[[nn]])
+}
+#GEX.DEGs_adv.df
+write.table(data.frame(gene=rownames(GEX.DEGs_adv.df),
+                       GEX.DEGs_adv.df), "GEX.DEGs.ILC2_adv.csv", col.names = T, row.names = F, quote = F, sep = ",")
+
+```
+
+```{r}
+lapply(GEX.DEGs_adv,function(x) x %>% group_by(cluster) %>% top_n(n = 8, wt = avg_log2FC))
+```
+
+```{r}
+lapply(GEX.DEGs_adv,dim)
+```
+
+```{r message=FALSE, warning=FALSE}
+vln_DEGs.adv <- list()
+Idents(GEX.seur) <- "SP.info"
+for(nn in names_adv){
+  pp.test <- VlnPlot(subset(GEX.seur, subset = Anno_ILC2 == nn), 
+               features = (GEX.DEGs_adv[[nn]] %>% group_by(cluster) %>% top_n(n = 8, wt = avg_log2FC))$gene,
+               combine = F)
+  title <- cowplot::ggdraw() + cowplot::draw_label(nn, fontface = 'bold', size = 9)
+  for(pp in 1:length(pp.test)){
+    pp.test[[pp]] <- pp.test[[pp]] + NoLegend()
+  }
+  vln_DEGs.adv[[nn]] <- cowplot::plot_grid(title = title,plotlist =  pp.test, ncol = 4)
+}
+Idents(GEX.seur) <- "Anno_ILC2"
+```
+
+##### top 8 vlnplot           
+
+```{r echo=FALSE, fig.height=15, fig.width=8}
+vln_DEGs.adv
+```
+
+
+### cell composition                    
+
+#### FB.info      
+
+```{r}
+Idents(GEX.seur) <- "Anno_ILC2"
+```
+
+```{r fig.width=9.2,fig.height=3.2}
+DimPlot(GEX.seur, reduction = "umap", label = F,group.by = "FB.info",
+        cols = c("#05BE78","#5ECDF2","#739BDD","#B7E16F","#87C0C9","#7756FA","#9855B9","#6F9920"))+
+  DimPlot(GEX.seur, reduction = "umap", label = T)
+```
+
+
+```{r fig.width=12,fig.height=5.2}
+DimPlot(GEX.seur, group.by = "FB.info", split.by = "FB.info", ncol = 4,
+        cols = c("#05BE78","#5ECDF2","#739BDD","#B7E16F","#87C0C9","#7756FA","#9855B9","#6F9920"))
+```
+
+```{r}
+table(data.frame(GEX.seur$FB.info,GEX.seur$Anno_ILC2))
+```
+
+```{r fig.width=5, fig.height=3}
+pheatmap::pheatmap(table(data.frame(GEX.seur$FB.info,GEX.seur$Anno_ILC2)),
+                   main = "Cell Count",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.0f")
+```
+
+```{r fig.width=5, fig.height=3}
+pheatmap::pheatmap(100*rowRatio(table(data.frame(GEX.seur$FB.info,GEX.seur$Anno_ILC2))),
+                   main = "Percentage of Sample count(row)",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.2f")
+```
+
+#### SP.info        
+
+
+```{r fig.width=9.2,fig.height=3.2}
+DimPlot(GEX.seur, reduction = "umap", label = F,group.by = "SP.info",
+        cols = c("#76797C","#0000C8","#FDB911"))+
+  DimPlot(GEX.seur, reduction = "umap", label = T)
+```
+
+```{r fig.width=12,fig.height=3.6}
+DimPlot(GEX.seur, group.by = "SP.info", split.by = "SP.info",cols = c("#76797C","#0000C8","#FDB911"), ncol = 3)
+```
+
+```{r}
+table(data.frame(GEX.seur$SP.info,GEX.seur$Anno_ILC2))
+```
+
+
+
+```{r fig.width=5, fig.height=2.4}
+pheatmap::pheatmap(table(data.frame(GEX.seur$SP.info,GEX.seur$Anno_ILC2)),
+                   main = "Cell Count",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.0f")
+```
+
+```{r fig.width=5, fig.height=2.4}
+pheatmap::pheatmap(100*rowRatio(table(data.frame(GEX.seur$SP.info,GEX.seur$Anno_ILC2))),
+                   main = "Percentage of Sample count(row)",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.2f")
+```
+
+```{r eval=FALSE, include=FALSE}
+saveRDS(GEX.seur,"adv_1110.GEX.seur_ILC2.Anno.rds")
+```
+
+
+
+## topic model               
+
+basically follow https://bitbucket.org/jerry00/mouse_small_intestine_immune_cell_atlas/src/master/script/topicModeling_PP.R     
+
+```{r}
+source("../analysis_1101/topicmodel.r")
+```
+
+### calculate topics         
+
+```{r}
+# using umap coordinates
+GEX.seur@reductions[['umap']]@cell.embeddings[1:5,1:2]
+```
+
+```{r}
+# to exclude ribosomal
+ribo.loc <- grepl("Rpl|Rps", rownames(GEX.seur@assays[['RNA']]@counts))
+head(rownames(GEX.seur@assays[['RNA']]@counts)[ribo.loc])
+sum(ribo.loc)
+```
+```{r}
+# Build topic models and generate assocaited figures 
+# Recommended to build models for k = 3,4,5,6,7,8,9,10 and tolerance 0.1 (set as inputs to this function)
+# each K would take hours, bigger K, longer time
+# so slow, would run into three sub-scripts from 3 to 10
+#for(kk in c(3,4,5,6,7,8,9,10)){
+#  kkk <- kk
+#  if(kk %in% c(4,6,8)){
+#    kkk <- paste0(0,kk)
+#  }
+#  FitGoM(t(as.matrix(GEX.seur@assays[['RNA']]@counts)[!ribo.loc,]),
+#         K = kk, tol = 0.1,
+#         path_rda =paste0("topicmodel/test_topic.n",kkk,"_t0.1.rda"))
+#}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

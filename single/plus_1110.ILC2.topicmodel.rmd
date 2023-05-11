@@ -1,0 +1,1531 @@
+---
+output: 
+  html_document: 
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+---
+
+
+# 20211009_10x_LY adv1110                             
+
+only ILC2 for topic modeling                
+
+```{r message=FALSE, warning=FALSE}
+source("../../../analysis.10x.r")
+```
+
+```{r}
+GEX.seur <- readRDS("adv_1110.GEX.seur_ILC2.Anno.rds")
+GEX.seur
+```
+
+## umap              
+
+```{r fig.width=9.2,fig.height=3.2}
+pumap.2 <- DimPlot(GEX.seur, reduction = "umap", label = F,group.by = "SP.info",
+        cols = c("#5A5C5F","#0000C8","#FDB911"))+ labs(title="")+ theme(aspect.ratio = 0.75)
+pumap.1 <- DimPlot(GEX.seur, reduction = "umap", label = T, group.by = "seurat_clusters") + NoLegend()+ labs(title="")+ theme(aspect.ratio = 0.75)
+pumap.2 + pumap.1
+```
+
+```{r fig.width=12,fig.height=3.6}
+pumap.3 <- DimPlot(GEX.seur, group.by = "SP.info", split.by = "SP.info",cols = c("#5A5C5F","#0000C8","#FDB911"), ncol = 3)+ theme(aspect.ratio = 0.75) + 
+  labs(title = "") + NoLegend()
+pumap.3
+```
+
+```{r fig.width=4,fig.height=8.8}
+pumap.4 <- DimPlot(GEX.seur, group.by = "SP.info", split.by = "SP.info",cols = c("#5A5C5F","#0000C8","#FDB911"), ncol = 1)+ 
+  labs(title = "") +
+  theme(aspect.ratio = 0.75) + 
+  NoLegend()
+pumap.4
+```
+
+```{r eval=FALSE, include=FALSE}
+ggsave("umap.ILC2_newclusters.pdf",
+       plot = pumap.1,
+       width = 4.6,
+       height = 3.2)
+ggsave("umap.ILC2_conditions.pdf",
+       plot = pumap.2,
+       width = 4.6,
+       height = 3.2)
+ggsave("umap.ILC2_cntx3_1.pdf",
+       plot = pumap.3,
+       width = 12,
+       height = 3.6)
+ggsave("umap.ILC2_cntx3_2.pdf",
+       plot = pumap.4,
+       width = 4,
+       height = 8.8)
+```
+
+
+
+## topic model               
+
+basically follow https://bitbucket.org/jerry00/mouse_small_intestine_immune_cell_atlas/src/master/script/topicModeling_PP.R               
+
+```{r}
+source("topicmodel.r")
+```
+
+
+### calculate topics         
+
+```{r}
+# using umap coordinates
+GEX.seur@reductions[['umap']]@cell.embeddings[1:5,1:2]
+```
+
+```{r}
+# to exclude ribosomal
+ribo.loc <- grepl("Rpl|Rps", rownames(GEX.seur@assays[['RNA']]@counts))
+head(rownames(GEX.seur@assays[['RNA']]@counts)[ribo.loc])
+sum(ribo.loc)
+```
+```{r}
+# Build topic models and generate assocaited figures 
+# Recommended to build models for k = 3,4,5,6,7,8,9,10 and tolerance 0.1 (set as inputs to this function)
+# each K would take hours, bigger K, longer time
+# so slow, would run into three sub-scripts from 3 to 10
+#for(kk in c(3,4,5,6,7,8,9,10)){
+#  kkk <- kk
+#  if(kk %in% c(4,6,8)){
+#    kkk <- paste0(0,kk)
+#  }
+#  FitGoM(t(as.matrix(GEX.seur@assays[['RNA']]@counts)[!ribo.loc,]),
+#         K = kk, tol = 0.1,
+#         path_rda =paste0("topicmodel/test_topic.n",kkk,"_t0.1.rda"))
+#}
+```
+
+```{r}
+# after topic models are done, ranged K, 
+# here could directly load the saved object
+# the default var is 'Topic_clus'
+load("topicmodel/test_topic.n08_t0.1.rda")
+```
+
+```{r}
+omega <- as.data.frame(Topic_clus$omega)
+colnames(omega) <- paste0("Topic_", colnames(omega))
+GEX.seur <- AddMetaData(GEX.seur, omega)
+```
+
+
+```{r paged.print=FALSE}
+head(GEX.seur@meta.data)
+```
+
+
+### plot                
+
+
+##### plot, for better visualization and only for visualization, set outliers as max inliers.            
+
+```{r}
+tk <- 8
+tp <- paste0("Topic_",1:tk)
+outlier <- lapply(tp, function(x) which(GEX.seur@meta.data[,x]>(mean(GEX.seur@meta.data[,x], na.rm=TRUE)+
+                                                                  3*sd(GEX.seur@meta.data[,x], na.rm=TRUE))))
+names(outlier) <- tp
+#
+max.nooutlier <- lapply(tp, function(x) if(length(unlist(outlier[x]))){
+                                          ceiling(10*max(GEX.seur@meta.data[-unlist(outlier[x]),x], na.rm=TRUE))/10  
+                                        }else{
+                                          ceiling(10*max(GEX.seur@meta.data[,x], na.rm=TRUE))/10
+                                        })
+names(max.nooutlier) <- tp
+```
+
+##### build a new seurat object to apply the change      
+
+```{r}
+GEX.seur_override <- GEX.seur
+for(xx in tp){
+  GEX.seur_override@meta.data[unlist(outlier[xx]),xx] <- rep(unlist(max.nooutlier[xx]))
+}
+```
+
+
+#### tsne/umap              
+
+##### generate list of tSNE plots        
+
+```{r eval=FALSE, include=FALSE}
+p <- lapply(tp, function(x) plot.tsne.feature(GEX.seur_override,
+                                              x,
+                                              "meta",
+                                              pt.size = 0.5,
+                                              ncols = 1,
+                                              title = "weight",
+                                              lower = 0,
+                                              upper = unlist(max.nooutlier[x]),
+                                              na.color = "gray"))
+p
+```
+
+
+```{r fig.width=6, fig.height=2.5}
+p_umap <- lapply(tp, function(x) plot.umap.feature(GEX.seur_override,
+                                              x,
+                                              "meta",
+                                              pt.size = 0.5,
+                                              ncols = 1,
+                                              title = "weight",
+                                              lower = 0,
+                                              upper = unlist(max.nooutlier[x]),
+                                              na.color = "gray") + theme(aspect.ratio = 0.75))
+p_umap
+```
+
+
+```{r fig.width=9,fig.height=4.5}
+cowplot::plot_grid(plotlist = p_umap, ncol = 4)
+```
+
+```{r fig.width=2, fig.height=2.5}
+colors.umap<-c("#191970","#121285","#0C0C9A","#0707B0","#0101C5","#0014CF","#0033D3","#0053D8","#0072DD","#0092E1","#00B2E6",
+            "#00D1EB","#23E8CD","#7AF17B","#D2FA29","#FFEB00","#FFC300","#FF9B00","#FF8400","#FF7800","#FF6B00","#FF5F00","#FF5300",
+            "#FF4700","#F73B00","#EF2E00","#E62300","#DD1700","#D50B00","#CD0000")
+
+p_umap.small <- lapply(tp, function(x){
+  FeaturePlot(GEX.seur_override, features = x,
+              cols = colors.umap,
+              pt.size = 3.2,
+              min.cutoff = 0,
+              max.cutoff = unlist(max.nooutlier[x])) +  
+    theme(aspect.ratio = 0.85) + coord_cartesian(xlim = c(-5.75,6), ylim = c(-3.75, 3.8))
+})
+p_umap.small <- lapply(p_umap.small, AugmentPlot)
+p_umap.small
+```  
+  
+
+```{r fig.width=9,fig.height=4.5}
+cowplot::plot_grid(plotlist = p_umap.small, ncol = 4)
+```
+
+```{r fig.width=9,fig.height=4.5}
+p_umap.small_mod <- p_umap.small
+p_umap.small_mod[[7]] <- NULL
+cowplot::plot_grid(plotlist = p_umap.small_mod, ncol = 4)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+ggsave(paste0("topicmodel/K",tk,"/topics_on_UMAP_k",tk,"_tol0.1.pdf"),
+       plot=cowplot::plot_grid(plotlist = p_umap, ncol = 4),
+       device = 'pdf',
+       width = 12,
+       height = 6)
+```
+
+```{r eval=FALSE, include=FALSE}
+ggsave(paste0("topicmodel/K",tk,"/smallumap/topics_on_UMAP_k",tk,"_tol0.1.pdf"),
+       plot=cowplot::plot_grid(plotlist = p_umap.small, ncol = 4),
+       device = 'pdf',
+       width = 12,
+       height = 6)
+```
+
+```{r eval=FALSE, include=FALSE}
+ggsave(paste0("topicmodel/K",tk,"/smallumap/topics_on_UMAP_k",tk,"_tol0.1.mod20211124.pdf"),
+       plot=cowplot::plot_grid(plotlist = p_umap.small_mod, ncol = 4),
+       device = 'pdf',
+       width = 12,
+       height = 6)
+```
+
+#### separate conditions              
+
+still in umap              
+         
+#### PBS
+```{r}
+p_umap.PBS <- lapply(tp, function(x) plot.umap.feature(subset(GEX.seur_override, subset=SP.info=="PBS"),
+                                              x,
+                                              "meta",
+                                              pt.size = 0.5,
+                                              ncols = 1,
+                                              title = "weight",
+                                              lower = 0,
+                                              upper = unlist(max.nooutlier[x]),
+                                              na.color = "gray") + theme(aspect.ratio = 0.75))
+p_umap.PBS
+```
+
+
+```{r fig.width=9,fig.height=4.5}
+cowplot::plot_grid(plotlist = p_umap.PBS, ncol = 4)
+```
+
+```{r eval=FALSE, include=FALSE}
+ggsave(paste0("topicmodel/K",tk,"/topics_on_UMAP_k",tk,"_tol0.1.onlyPBS.pdf"),
+       plot=cowplot::plot_grid(plotlist = p_umap.PBS, ncol = 4),
+       device = 'pdf',
+       width = 12,
+       height = 6)
+```
+
+```{r fig.width=2, fig.height=2.5}
+colors.umap<-c("#191970","#121285","#0C0C9A","#0707B0","#0101C5","#0014CF","#0033D3","#0053D8","#0072DD","#0092E1","#00B2E6",
+            "#00D1EB","#23E8CD","#7AF17B","#D2FA29","#FFEB00","#FFC300","#FF9B00","#FF8400","#FF7800","#FF6B00","#FF5F00","#FF5300",
+            "#FF4700","#F73B00","#EF2E00","#E62300","#DD1700","#D50B00","#CD0000")
+
+p_umap.small_PBS <- lapply(tp, function(x){
+  FeaturePlot(subset(GEX.seur_override, subset=SP.info=="PBS"), features = x,
+              cols = colors.umap,
+              pt.size = 3.2,
+              min.cutoff = 0,
+              max.cutoff = unlist(max.nooutlier[x])) +  
+    theme(aspect.ratio = 0.85) + coord_cartesian(xlim = c(-5.75,6), ylim = c(-3.75, 3.8))
+})
+p_umap.small_PBS <- lapply(p_umap.small_PBS, AugmentPlot)
+p_umap.small_PBS
+```  
+  
+
+```{r fig.width=9,fig.height=4.5}
+cowplot::plot_grid(plotlist = p_umap.small_PBS, ncol = 4)
+```
+
+```{r eval=FALSE, include=FALSE}
+ggsave(paste0("topicmodel/K",tk,"/smallumap/topics_on_UMAP_k",tk,"_tol0.1.onlyPBS.pdf"),
+       plot=cowplot::plot_grid(plotlist = p_umap.small_PBS, ncol = 4),
+       device = 'pdf',
+       width = 12,
+       height = 6)
+```
+
+#### IL33
+```{r}
+p_umap.IL33 <- lapply(tp, function(x) plot.umap.feature(subset(GEX.seur_override, subset=SP.info=="IL-33"),
+                                              x,
+                                              "meta",
+                                              pt.size = 0.5,
+                                              ncols = 1,
+                                              title = "weight",
+                                              lower = 0,
+                                              upper = unlist(max.nooutlier[x]),
+                                              na.color = "gray") + theme(aspect.ratio = 0.75))
+p_umap.IL33
+```
+
+
+```{r fig.width=9,fig.height=4.5}
+cowplot::plot_grid(plotlist = p_umap.IL33, ncol = 4)
+```
+
+```{r eval=FALSE, include=FALSE}
+ggsave(paste0("topicmodel/K",tk,"/topics_on_UMAP_k",tk,"_tol0.1.onlyIL33.pdf"),
+       plot=cowplot::plot_grid(plotlist = p_umap.IL33, ncol = 4),
+       device = 'pdf',
+       width = 12,
+       height = 6)
+```
+
+
+```{r fig.width=2, fig.height=2.5}
+colors.umap<-c("#191970","#121285","#0C0C9A","#0707B0","#0101C5","#0014CF","#0033D3","#0053D8","#0072DD","#0092E1","#00B2E6",
+            "#00D1EB","#23E8CD","#7AF17B","#D2FA29","#FFEB00","#FFC300","#FF9B00","#FF8400","#FF7800","#FF6B00","#FF5F00","#FF5300",
+            "#FF4700","#F73B00","#EF2E00","#E62300","#DD1700","#D50B00","#CD0000")
+
+p_umap.small_IL33 <- lapply(tp, function(x){
+  FeaturePlot(subset(GEX.seur_override, subset=SP.info=="IL-33"), features = x,
+              cols = colors.umap,
+              pt.size = 3.2,
+              min.cutoff = 0,
+              max.cutoff = unlist(max.nooutlier[x])) +  
+    theme(aspect.ratio = 0.85) + coord_cartesian(xlim = c(-5.75,6), ylim = c(-3.75, 3.8))
+})
+p_umap.small_IL33 <- lapply(p_umap.small_IL33, AugmentPlot)
+p_umap.small_IL33
+```  
+  
+
+```{r fig.width=9,fig.height=4.5}
+cowplot::plot_grid(plotlist = p_umap.small_IL33, ncol = 4)
+```
+
+```{r eval=FALSE, include=FALSE}
+ggsave(paste0("topicmodel/K",tk,"/smallumap/topics_on_UMAP_k",tk,"_tol0.1.onlyIL33.pdf"),
+       plot=cowplot::plot_grid(plotlist = p_umap.small_IL33, ncol = 4),
+       device = 'pdf',
+       width = 12,
+       height = 6)
+```
+
+
+#### IL33_DA
+```{r}
+p_umap.IL33_DA <- lapply(tp, function(x) plot.umap.feature(subset(GEX.seur_override, subset=SP.info=="IL-33_DA"),
+                                              x,
+                                              "meta",
+                                              pt.size = 0.5,
+                                              ncols = 1,
+                                              title = "weight",
+                                              lower = 0,
+                                              upper = unlist(max.nooutlier[x]),
+                                              na.color = "gray") + theme(aspect.ratio = 0.75))
+p_umap.IL33_DA
+```
+
+
+```{r fig.width=9,fig.height=4.5}
+cowplot::plot_grid(plotlist = p_umap.IL33_DA, ncol = 4)
+```
+
+```{r eval=FALSE, include=FALSE}
+ggsave(paste0("topicmodel/K",tk,"/topics_on_UMAP_k",tk,"_tol0.1.onlyIL33_DA.pdf"),
+       plot=cowplot::plot_grid(plotlist = p_umap.IL33_DA, ncol = 4),
+       device = 'pdf',
+       width = 12,
+       height = 6)
+```
+
+```{r fig.width=2, fig.height=2.5}
+colors.umap<-c("#191970","#121285","#0C0C9A","#0707B0","#0101C5","#0014CF","#0033D3","#0053D8","#0072DD","#0092E1","#00B2E6",
+            "#00D1EB","#23E8CD","#7AF17B","#D2FA29","#FFEB00","#FFC300","#FF9B00","#FF8400","#FF7800","#FF6B00","#FF5F00","#FF5300",
+            "#FF4700","#F73B00","#EF2E00","#E62300","#DD1700","#D50B00","#CD0000")
+
+p_umap.small_IL33_DA <- lapply(tp, function(x){
+  FeaturePlot(subset(GEX.seur_override, subset=SP.info=="IL-33_DA"), features = x,
+              cols = colors.umap,
+              pt.size = 3.2,
+              min.cutoff = 0,
+              max.cutoff = unlist(max.nooutlier[x])) +  
+    theme(aspect.ratio = 0.85) + coord_cartesian(xlim = c(-5.75,6), ylim = c(-3.75, 3.8))
+})
+p_umap.small_IL33_DA <- lapply(p_umap.small_IL33_DA, AugmentPlot)
+p_umap.small_IL33_DA
+```  
+  
+
+```{r fig.width=9,fig.height=4.5}
+cowplot::plot_grid(plotlist = p_umap.small_IL33_DA, ncol = 4)
+```
+
+```{r eval=FALSE, include=FALSE}
+ggsave(paste0("topicmodel/K",tk,"/smallumap/topics_on_UMAP_k",tk,"_tol0.1.onlyIL33_DA.pdf"),
+       plot=cowplot::plot_grid(plotlist = p_umap.small_IL33_DA, ncol = 4),
+       device = 'pdf',
+       width = 12,
+       height = 6)
+```
+
+#### topic score          
+
+##### collect gene scores for each topic      
+```{r message=FALSE, warning=FALSE}
+theta <- as.data.frame(Topic_clus$theta)
+colnames(theta) <- paste0("Topic_", 1:tk)
+
+feat.topic <- ExtractTopFeatures(theta, top_features = 100)
+
+feat.topic_genes <- as.data.frame(sapply(1:tk, function(x) rownames(theta)[feat.topic$indices[x,]]))
+colnames(feat.topic_genes) <- paste0("topic_", 1:tk)
+
+feat.topic_scores <- as.data.frame(feat.topic$scores)
+rownames(feat.topic_scores) <- paste0("topic_", 1:tk)
+```
+
+```{r eval=FALSE, include=FALSE}
+##
+df.topic_genes <- feat.topic_genes
+# add one " " in front of gene names to avoid 'auto-data-transform' in excel
+for(ii in 1:tk){
+  df.topic_genes[,ii] <- paste0(" ",df.topic_genes[,ii])
+  
+}
+
+
+write.csv(feat.topic_genes,
+          paste0("topicmodel/K",tk,"/top100features_k",tk,"_tol0.1.csv"),
+          row.names = FALSE)
+
+##
+df.score <- cbind(df.topic_genes[,1],as.vector(unlist(feat.topic_scores[1,])))
+for(iii in 2:tk){
+  df.score <- cbind(df.score,df.topic_genes[,iii],as.vector(unlist(feat.topic_scores[iii,])))
+}
+colnames(df.score) <- paste0("topic_",sort(c(1:tk,1:tk)),rep(c("","_score"),tk))
+write.csv(df.score,
+          paste0("topicmodel/K",tk,"/top100scores_k",tk,"_tol0.1.csv"),
+          row.names = FALSE)
+```
+
+
+#### topic top genes          
+
+##### visualize the top 40 genes of each topic      
+
+```{r}
+plot.feat.topic <- data.frame()
+for(j in 1:nrow(feat.topic_scores)){
+  current.topic <- as.data.frame(t(feat.topic_scores[j,]))
+  colnames(current.topic) <- "score"
+  rownames(current.topic) <- feat.topic_genes[,j]
+  current.topic$genes <- feat.topic_genes[,j]
+  current.topic.top <- current.topic[1:40,]
+  current.topic.top$topic <- rep(colnames(feat.topic_genes)[j], nrow(current.topic.top))
+  current.topic.top$genes <- factor(current.topic.top$genes, levels=rev(current.topic.top$genes))
+  current.topic.top$order <- paste0(current.topic.top$genes, "_", current.topic.top$topic)
+  current.topic.top$order <- factor(current.topic.top$order, levels=rev(current.topic.top$order))
+  
+  plot.feat.topic <- rbind(plot.feat.topic, current.topic.top)
+}
+
+plot.feat.topic$topic <- factor(plot.feat.topic$topic, levels=unique(plot.feat.topic$topic))
+```
+
+bar plots       
+```{r topic_2,fig.width=8,fig.height=7.2}
+p_bar <- ggplot(data = plot.feat.topic, aes(x = order, y = score)) +
+           geom_bar(stat = "identity") +
+           coord_flip() +
+           theme(axis.text.x = element_text(angle = 45, hjust = 1),
+                 axis.text = element_text(size = 5), text = element_text(size = 8),
+                 axis.line = element_line(colour = "black"),
+                 panel.grid.major = element_blank(),
+                 panel.grid.minor = element_blank(),
+                 panel.border = element_blank(),
+                 panel.background = element_blank(), strip.background = element_rect(color = "white", fill = "white")) +
+           facet_wrap(~topic, scales="free", ncol = 4) +
+           scale_x_discrete(breaks = plot.feat.topic$order, labels = plot.feat.topic$genes)
+  
+p_bar        
+```
+
+
+```{r eval=FALSE, include=FALSE}
+ggsave(paste0("topicmodel/K",tk,"/topics_bar_k",tk,"_tol0.1.pdf"),
+       plot=p_bar,
+       device = 'pdf',
+       width = 8,
+       height = 7.2)
+```
+
+plot expression of top 40 genes        
+```{r}
+topic.genes <- lapply(tolower(tp), function(x) plot.feat.topic$genes[which(plot.feat.topic$topic==x)])
+names(topic.genes) <- tolower(tp)
+```
+
+```{r eval=FALSE, include=FALSE}
+for(t in 1:tk){
+  p_genes <- lapply(unlist(topic.genes[t]), function(y) plot.umap.feature(GEX.seur, y, "gene",
+                                                                          pt.size = 0.5,
+                                                                          ncols = 1, title = "expression") + theme(aspect.ratio = 0.75))
+  # arrange plots on a grid
+  cowplot::plot_grid(plotlist=p_genes, ncol=4)
+  
+  # ggsave
+  ggsave(paste0("topicmodel/K",tk,"/topics_top40_expression_on_UMAP_",tp[t],"_k",tk,"_tol0.1.pdf"),
+         width = 13, height = 20, units = "in")
+}
+```
+
+
+```{r eval=FALSE, include=FALSE}
+### small umap with vector-friendly AugmentPlot
+for(t in 1:tk){
+  p_genes <- lapply(as.vector(unlist(topic.genes[t])), function(y){
+    FeaturePlot(GEX.seur, features = y, 
+                cols = colors.umap,
+                pt.size = 3.2)+  
+    theme(aspect.ratio = 0.85) + coord_cartesian(xlim = c(-5.75,6), ylim = c(-3.75, 3.8))
+  })
+  p_genes <- lapply(p_genes, AugmentPlot)
+  
+  # arrange plots on a grid
+  cowplot::plot_grid(plotlist=p_genes, ncol=4)
+  
+  # ggsave
+  ggsave(paste0("topicmodel/K",tk,"/smallumap/topic_genes/topics_top40_expression_on_UMAP_",tp[t],"_k",tk,"_tol0.1.pdf"),
+         width = 13, height = 36, units = "in")
+}
+```
+
+
+### clusters vs topics            
+
+#### all cells      
+
+```{r fig.height=3.2, fig.width=4.2, message=FALSE, warning=FALSE}
+## code from Dianyu's github
+#    https://github.com/chendianyu/2021_NI_scGCB
+## Connect clustering and topic model
+cluster_topic_mtx <- GEX.seur_override@meta.data %>% 
+    #filter(seurat_clusters != 6) %>% 
+    gather(key = "topic", value = "weight", paste0("Topic_", 1:8), factor_key = T) %>%
+    group_by(Anno_ILC2, topic) %>% 
+    summarise(weight = mean(weight)) %>%
+    spread(key = topic, value = weight) 
+cluster_topic_mtx <- column_to_rownames(cluster_topic_mtx, var = "Anno_ILC2") 
+topic_order <- order(max.col(t(apply(cluster_topic_mtx, 2, scale))))
+pheatmap::pheatmap(t(cluster_topic_mtx)[rev(c(8,4,3,7,1,2,5,6)),c(2,1,3,4,5,6)],
+         cluster_rows = F,
+         cluster_cols = F,
+         scale = "row",
+         main= "Relation of Topics and Clusters")
+```
+
+
+```{r}
+## code from Dianyu's github
+#    https://github.com/chendianyu/2021_NI_scGCB
+## Connect clustering and topic model
+plot_topic_cluster <- function(obj,topic){
+    obj@meta.data %>% 
+        #filter(seurat_clusters!=6) %>% 
+        ggplot(aes_string("seurat_clusters", paste0("Topic_", topic), color = "seurat_clusters")) +
+        geom_violin(draw_quantiles=c(0.25,0.75)) +
+        ggbeeswarm::geom_quasirandom(size = 0.01, width = 0.3, alpha = 0.5) +
+        stat_summary(fun.y=mean, geom="point", shape=18, size=1, color="black") +
+        theme(panel.grid.major = element_blank(), 
+              panel.grid.minor = element_blank(), 
+              panel.background = element_blank(), 
+              panel.border = element_rect(fill = NA))
+}
+
+```
+
+
+```{r message=FALSE, warning=FALSE, fig.width=3.5, fig.height=3.5}
+pvnl <- list()
+for(tt in 1:tk){
+  pvnl[[tt]] <- plot_topic_cluster(GEX.seur_override,tt) + labs(x="")
+}
+
+pvnl
+```
+
+```{r fig.width=12, fig.height=7}
+cowplot::plot_grid(plotlist=pvnl, ncol=4)
+```
+
+
+
+```{r eval=FALSE, warning=FALSE, include=FALSE}
+pdf(paste0("topicmodel/K",tk,"/topics_clusters_heatmap_K",tk,"_tol0.1.pdf"),
+    width = 4.2,
+    height = 3.2)
+pheatmap::pheatmap(t(cluster_topic_mtx)[rev(c(8,4,3,7,1,2,5,6)),c(2,1,3,4,5,6)],
+         cluster_rows = F,
+         cluster_cols = F,
+         scale = "row",
+         main= "Relation of Topics and Clusters")
+dev.off()
+
+ggsave(paste0("topicmodel/K",tk,"/topics_clusters_violin_K",tk,"_tol0.1.pdf"),
+       plot = cowplot::plot_grid(plotlist=pvnl, ncol=4),
+       width = 12,
+       height = 7)
+
+```
+
+
+```{r}
+## code from Dianyu's github
+#    https://github.com/chendianyu/2021_NI_scGCB
+## Connect clustering and topic model
+plot_topic_cluster.small <- function(obj,topic){
+    obj@meta.data %>% 
+        #filter(seurat_clusters!=6) %>% 
+        ggplot(aes_string("seurat_clusters", paste0("Topic_", topic), color = "seurat_clusters" )) +
+        geom_violin(draw_quantiles=c(0.25,0.75)) +
+        ggbeeswarm::geom_quasirandom(size = 0.01, width = 0.2, alpha = 0.3) +
+        stat_summary(fun.y=mean, geom="point", shape=18, size=1, color="black") +
+        theme(panel.grid.major = element_blank(), 
+              panel.grid.minor = element_blank(), 
+              panel.background = element_blank(), 
+              panel.border = element_rect(fill = NA))
+}
+
+```
+
+
+```{r message=FALSE, warning=FALSE, fig.width=3.5, fig.height=3.5}
+### small 
+pvnl.small <- list()
+for(tt in 1:tk){
+  pvnl.small[[tt]] <- plot_topic_cluster.small(GEX.seur_override,tt) + labs(x="") + NoLegend()
+}
+#pvnl.small <- lapply(pvnl, AugmentPlot)
+pvnl.small
+```
+
+
+
+```{r fig.height=6, fig.width=8, message=FALSE, warning=FALSE}
+cowplot::plot_grid(plotlist=pvnl.small, ncol=4)
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+ggsave(paste0("topicmodel/K",tk,"/smallumap/topics_clusters_violin_K",tk,"_tol0.1.pdf"),
+       plot = cowplot::plot_grid(plotlist=pvnl.small, ncol=4),
+       width = 8,
+       height = 6)
+
+```
+
+
+### compare phenotypes                  
+
+
+```{r}
+#### subset Seurat object for condtions
+## PBS
+topic.avg.PBS <- sapply(tp, function(x){
+  mean(GEX.seur_override@meta.data[GEX.seur_override$SP.info=="PBS",x])
+})
+names(topic.avg.PBS) <- tp
+
+## IL33
+topic.avg.IL33 <- sapply(tp, function(x){
+  mean(GEX.seur_override@meta.data[GEX.seur_override$SP.info=="IL-33",x])
+})
+names(topic.avg.IL33) <- tp
+
+## IL33_DA
+topic.avg.IL33_DA <- sapply(tp, function(x){
+  mean(GEX.seur_override@meta.data[GEX.seur_override$SP.info=="IL-33_DA",x])
+})
+names(topic.avg.IL33_DA) <- tp
+
+## combine
+topic.avg.all <- rbind(topic.avg.PBS,topic.avg.IL33,topic.avg.IL33_DA)
+rownames(topic.avg.all) <- c("PBS","IL33","IL33_DA")
+```
+
+
+```{r}
+####
+topic.avg.PBS
+topic.avg.IL33
+topic.avg.IL33_DA
+topic.avg.all
+```
+
+
+#### plot          
+           
+```{r}
+gp.list.box <- list()
+gp.list.avg <- list()
+gp.list.cum <- list()
+
+
+for(top in tp){
+  
+  topic.data <- data.frame(weight = c(GEX.seur_override@meta.data[GEX.seur_override$SP.info=="PBS",top],
+                                      GEX.seur_override@meta.data[GEX.seur_override$SP.info=="IL-33",top],
+                                      GEX.seur_override@meta.data[GEX.seur_override$SP.info=="IL-33_DA",top]),
+                           condition = c(rep("PBS", length(which(GEX.seur_override$SP.info=="PBS"))),
+                                         rep("IL33", length(which(GEX.seur_override$SP.info=="IL-33"))),
+                                         rep("IL33_DA", length(which(GEX.seur_override$SP.info=="IL-33_DA")))),
+                           topic = rep(top, nrow(GEX.seur_override@meta.data)))
+  topic.data$condition <- factor(topic.data$condition, levels = c("PBS","IL33","IL33_DA"))
+  
+  gp.list.box[[top]] <- ggplot(topic.data, aes(y=weight, x=condition, color=condition)) +
+                    geom_boxplot() + scale_y_continuous(limits=c(0,max.nooutlier[[top]])) +
+                    facet_wrap(~ topic, ncol=1) +
+    scale_color_manual(values = c("#5A5C5F","#0000C8","#FDB911")) + 
+                    theme_bw() + theme(panel.grid=element_blank(), 
+                                      strip.background = element_rect(color = "white", fill = "white"),
+                                      panel.border = element_blank(),
+                                      axis.line = element_line(colour = "black"))
+  
+  avg.data <- as.data.frame(topic.avg.all[,top])
+  avg.data$topic <- rep(top, nrow(avg.data))
+  colnames(avg.data) <- c("average", "topic")
+  
+  
+  gp.list.avg[[top]] <- ggplot(avg.data, aes(x=factor(rownames(avg.data),levels = c("PBS","IL33","IL33_DA")),
+                                                      y=average, 
+                                             color=factor(rownames(avg.data),levels = c("PBS","IL33","IL33_DA")))) +
+                   geom_col(fill="white") + xlab('') +
+                   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.title = element_text(), strip.background = element_rect(color = "white", fill = "white")) +
+                   facet_wrap(~ topic, ncol = 1) +
+                   theme_bw() + theme(panel.grid=element_blank(), 
+                                      strip.background = element_rect(color = "white", fill = "white"),
+                                      panel.border = element_blank(),
+                                      axis.line = element_line(colour = "black")) + 
+                   scale_color_manual(values = c("#5A5C5F","#0000C8","#FDB911"),name="condition")
+  
+  gp.list.cum[[top]] <- ggplot(topic.data, aes(x=weight, color=condition)) +
+                   stat_ecdf(geom="step", size = 1) +
+                   scale_color_manual(values = c("#5A5C5F","#0000C8","#FDB911")) + 
+                   facet_wrap(~ topic, ncol=1) + labs(y="")+
+                   theme_bw() + theme(panel.grid =element_blank(), 
+                                      strip.background = element_rect(color = "white", fill = "white"),
+                                      panel.border = element_blank(),
+                                      axis.line = element_line(colour = "black"))
+  
+}
+
+```
+
+
+
+```{r fig.width=12, fig.height=7}
+cowplot::plot_grid(plotlist=gp.list.box, ncol=4)
+```
+
+```{r fig.width=12, fig.height=7}
+cowplot::plot_grid(plotlist=gp.list.avg, ncol=4)
+```
+
+```{r fig.width=12, fig.height=7}
+cowplot::plot_grid(plotlist=gp.list.cum, ncol=4)
+```
+
+```{r fig.width=12, fig.height=7}
+gp.list.cum_mod <- gp.list.cum
+gp.list.cum_mod[[7]] <- NULL
+cowplot::plot_grid(plotlist=gp.list.cum_mod, ncol=4)
+```
+
+```{r eval=FALSE, include=FALSE}
+# save plot
+ggsave(paste0("topicmodel/K",tk,"/comparison/comparison_boxplot_K",tk,"_tol0.1.pdf"),
+       plot = cowplot::plot_grid(plotlist=gp.list.box, ncol=4),
+       width = 12,
+       height = 7)
+ggsave(paste0("topicmodel/K",tk,"/comparison/comparison_avg_K",tk,"_tol0.1.pdf"),
+       plot = cowplot::plot_grid(plotlist=gp.list.avg, ncol=4),
+       width = 12,
+       height = 7)
+ggsave(paste0("topicmodel/K",tk,"/comparison/comparison_cumdist_K",tk,"_tol0.1.pdf"),
+       plot = cowplot::plot_grid(plotlist=gp.list.cum, ncol=4),
+       width = 12,
+       height = 7)
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+ggsave(paste0("topicmodel/K",tk,"/comparison/comparison_cumdist_K",tk,"_tol0.1.mod20211124.pdf"),
+       plot = cowplot::plot_grid(plotlist=gp.list.cum_mod, ncol=4),
+       width = 12,
+       height = 7)
+```
+
+
+#### compute p-values          
+          
+between each two conditions            
+
+
+```{r}
+# PBS vs IL33
+p.PBS_vs_IL33.wilcox <- lapply(tp, function(x){
+  wilcox.test(GEX.seur_override@meta.data[GEX.seur_override$SP.info=="PBS",x],
+              GEX.seur_override@meta.data[GEX.seur_override$SP.info=="IL-33",x])
+})
+names(p.PBS_vs_IL33.wilcox) <- tp
+pmat.PBS_vs_IL33.wilcox <- sapply(tp, function(x) p.PBS_vs_IL33.wilcox[[x]]$p.value)
+
+
+# PBS vs IL33_DA
+p.PBS_vs_IL33DA.wilcox <- lapply(tp, function(x){
+  wilcox.test(GEX.seur_override@meta.data[GEX.seur_override$SP.info=="PBS",x],
+              GEX.seur_override@meta.data[GEX.seur_override$SP.info=="IL-33_DA",x])
+})
+names(p.PBS_vs_IL33DA.wilcox) <- tp
+pmat.PBS_vs_IL33DA.wilcox <- sapply(tp, function(x) p.PBS_vs_IL33DA.wilcox[[x]]$p.value)
+
+
+# IL33 vs IL33_DA
+p.IL33DA_vs_IL33.wilcox <- lapply(tp, function(x){
+  wilcox.test(GEX.seur_override@meta.data[GEX.seur_override$SP.info=="IL-33_DA",x],
+              GEX.seur_override@meta.data[GEX.seur_override$SP.info=="IL-33",x])
+})
+names(p.IL33DA_vs_IL33.wilcox) <- tp
+pmat.IL33DA_vs_IL33.wilcox <- sapply(tp, function(x) p.IL33DA_vs_IL33.wilcox[[x]]$p.value)
+
+
+# combine pvalue
+pval.conditions.wilcox <- data.frame(PBS_vs_IL33= pmat.PBS_vs_IL33.wilcox ,
+                                     PBS_vs_IL33DA= pmat.PBS_vs_IL33DA.wilcox ,
+                                     IL33_vs_IL33DA= pmat.IL33DA_vs_IL33.wilcox)
+
+# combine padjust
+padj.conditions.wilcox <- data.frame(PBS_vs_IL33= p.adjust(pmat.PBS_vs_IL33.wilcox,method = "BH"),
+                                     PBS_vs_IL33DA= p.adjust(pmat.PBS_vs_IL33DA.wilcox,method = "BH"),
+                                     IL33_vs_IL33DA= p.adjust(pmat.IL33DA_vs_IL33.wilcox,method = "BH"))
+
+pmerge.conditions.wilcox <- cbind(pval.conditions.wilcox,padj.conditions.wilcox)
+colnames(pmerge.conditions.wilcox) <- c(paste0(colnames(pval.conditions.wilcox),".pval"),
+                                        paste0(colnames(padj.conditions.wilcox),".padj"))
+```
+
+
+```{r}
+pval.conditions.wilcox
+```
+
+```{r}
+padj.conditions.wilcox
+```
+
+```{r}
+pmerge.conditions.wilcox
+```
+
+
+```{r eval=FALSE, include=FALSE}
+write.csv(pmerge.conditions.wilcox, paste0("topicmodel/K",tk,"/comparison/p.values_WILCOXON-TEST__K",tk,"_tol0.1.csv"))
+          
+```
+
+## signature score            
+
+### load DEGs             
+
+from Lung ILC2 SS2 data 'DA vs PBS' (both have IL33)             
+
+
+```{r paged.print=FALSE}
+DEGs.LungILC2_DAvsPBS <- read.csv("SS2_data/DESeq2_DEGs_20210722.DA_vs_PBS.csv")
+rownames(DEGs.LungILC2_DAvsPBS) <- DEGs.LungILC2_DAvsPBS$gene
+head(DEGs.LungILC2_DAvsPBS)
+```
+
+```{r}
+DEGs.DA_up <- (DEGs.LungILC2_DAvsPBS %>% filter(padj < 0.05 & log2FoldChange > 1))$gene
+DEGs.DA_dn <- (DEGs.LungILC2_DAvsPBS %>% filter(padj < 0.05 & log2FoldChange < -1))$gene
+```
+
+
+
+### sig. score             
+
+using code on                     
+https://github.com/chendianyu/2021_NI_scGCB/blob/main/script/Signature_score.Rmd          
+which is from Adam Hamber's              
+
+
+```{r}
+## The code below is from Adam Hamber
+## 2D scoring by Itay
+get_controls <- function(counts, gene.list, verbose=F, control.genes.per.gene=100)
+{
+    # Itay: "Such scores are inevitably correlated with cell complexity so to avoid 
+    # that I subtract a "control" score which is generated by averaging over a control 
+    # gene set. Control gene sets are chosen to contain 100 times more genes than the 
+    # real gene set (analogous to averaging over 100 control sets of similar size) and 
+    # to have the same distribution of population/bulk - based expression levels as the 
+    # real gene set, such that they are expected to have the same number of "zeros" and 
+    # to eliminate the correlation with complexity."
+    # ---------------------------------------------------------------------------------
+    # Going to find control points by finding the closest genes in terms of expression level and % of the time we observe it
+    if(verbose){cat(sprintf("Finding %s background genes based on similarity to given gene set [%s genes] \n", 
+                            control.genes.per.gene*length(gene.list), length(gene.list)))}
+    cat("Summarizing data \n")
+    summary = data.frame(gene=row.names(counts), mean.expr = Matrix::rowMeans(counts), fract.zero = Matrix::rowMeans(counts==0), stringsAsFactors = F)
+    #summary = data.frame(gene=row.names(counts), mean.expr = apply(counts,1,mean), fract.zero = apply(counts==0,1,mean), stringsAsFactors = F)
+    summary$mean.expr.s = scale(summary$mean.expr)
+    summary$fract.zero.s = scale(summary$fract.zero)
+    actual.genes = summary[summary$gene %in% gene.list,]
+    background.genes = summary[!summary$gene %in% gene.list,]
+    
+    #find the 10 closest genes to each cell cycle marker gene and add them to the lists of control genes
+    get_closest_genes <- function(i)
+    {
+        background.genes$dist = sqrt((background.genes$mean.expr.s - actual.genes$mean.expr.s[i])^2 + 
+                                         (background.genes$fract.zero.s - actual.genes$fract.zero.s[i])^2)
+        ordered = background.genes$gene[order(background.genes$dist)]
+        ordered = ordered[!ordered %in% controls] # don't take genes that already appear in the list 
+        closest = head(ordered, n=control.genes.per.gene)
+        return(closest)
+    }
+    controls = c();
+    
+    for (i in 1:length(gene.list)){
+        #info(sprintf("Finding %s control genes for %s", control.genes.per.gene, gene.list[i]))
+        closest = get_closest_genes(i)
+        #info(sprintf("Found %s: ", length(closest)))
+        controls = unique(c(controls, closest))
+    }
+    
+    if(verbose){cat(sprintf("Control gene selection complete. %s genes found. \n", length(controls)))}
+    #print(controls)
+    return(controls)
+}
+
+## Define calculate function
+calculate_signature_score <- function(count_matrix, gene_list){
+    control_gene <- get_controls(counts = count_matrix,
+                                 gene.list = gene_list)
+    signature_score <- colMeans(count_matrix[gene_list, ], na.rm = TRUE) - 
+        colMeans(count_matrix[control_gene, ], na.rm = TRUE)
+    return(signature_score)
+}
+```
+
+
+```{r}
+score.DA_up <- calculate_signature_score(as.data.frame(GEX.seur@assays[['RNA']]@data),
+                                         DEGs.DA_up)
+#score.DA_up
+score.DA_dn <- calculate_signature_score(as.data.frame(GEX.seur@assays[['RNA']]@data),
+                                         DEGs.DA_dn)
+#score.DA_dn
+```
+```{r}
+GEX.seur_score <- GEX.seur
+GEX.seur_score <- AddMetaData(GEX.seur_score,
+                              score.DA_up,
+                              "DAup_score")
+GEX.seur_score <- AddMetaData(GEX.seur_score,
+                              score.DA_dn,
+                              "DAdn_score")
+
+```
+
+
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE, fig.width=4, fig.height=5}
+## violin plot
+vln.DA_up <- GEX.seur_score@meta.data %>%
+    ggplot(aes(SP.info, DAup_score, color = SP.info)) +
+    geom_violin(draw_quantiles=c(0.25,0.75),trim = FALSE) +
+    #ylim(c(-0.25,0.35)) +
+    ggbeeswarm::geom_quasirandom(size = 0.01, width = 0.2, alpha = 0.3) +
+    stat_summary(fun.y=mean, geom="point", shape=18, size=3, color="black") +
+    ggpubr::stat_compare_means(aes(lable = ..p.signif..), 
+                               method = "wilcox.test",
+                               comparisons = list(c("IL-33","IL-33_DA"),
+                                                  c("IL-33","PBS"),
+                                                  c("PBS","IL-33_DA"))) +
+      scale_color_manual(values = c("#5A5C5F","#0000C8","#FDB911")) +
+    labs(x="") +
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          panel.background = element_blank(), 
+          panel.border = element_rect(fill = NA))
+vln.DA_up + NoLegend()
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE, fig.width=4, fig.height=5}
+## violin plot
+vln.DA_dn <- GEX.seur_score@meta.data %>%
+    ggplot(aes(SP.info, DAdn_score, color = SP.info)) +
+    geom_violin(draw_quantiles=c(0.25,0.75),trim = FALSE) +
+    #ylim(c(-0.25,0.35)) +
+    ggbeeswarm::geom_quasirandom(size = 0.01, width = 0.2, alpha = 0.3) +
+    stat_summary(fun.y=mean, geom="point", shape=18, size=3, color="black") +
+    ggpubr::stat_compare_means(aes(lable = ..p.signif..), 
+                               method = "wilcox.test",
+                               comparisons = list(c("IL-33","IL-33_DA"),
+                                                  c("IL-33","PBS"),
+                                                  c("PBS","IL-33_DA"))) +
+    scale_color_manual(values = c("#5A5C5F","#0000C8","#FDB911")) +
+    labs(x="") +
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          panel.background = element_blank(), 
+          panel.border = element_rect(fill = NA))
+vln.DA_dn + NoLegend()
+```
+```{r eval=FALSE, include=FALSE}
+ggsave("violin.sigscore_ss2_DAup.wilcox-test.pdf",
+       plot = vln.DA_up + NoLegend(),
+       width = 4,
+       height = 5)
+ggsave("violin.sigscore_ss2_DAdn.wilcox-test.pdf",
+       plot = vln.DA_dn + NoLegend(),
+       width = 4,
+       height = 5)
+```
+
+
+
+
+### sig. score on SS2               
+
+```{r}
+tpm.ss2 <- read.table("I:/Shared_win/projects/20200812_ILC2_LY_RNAseq/analysis/RNAseq.20200812_ILC2.tpm.matrix", header = T)
+rownames(tpm.ss2) <- tpm.ss2$gene_id
+tpm.ss2 <- tpm.ss2[,2:ncol(tpm.ss2)]
+tpm.filt <- tpm.ss2[(rowSums(tpm.ss2[,1:3]>2) >=3) |
+                    (rowSums(tpm.ss2[,4:6]>2) >=3),]
+```
+
+
+```{r paged.print=FALSE}
+dim(tpm.ss2)
+head(tpm.ss2)
+```
+
+```{r paged.print=FALSE}
+dim(tpm.filt)
+head(tpm.filt)
+```
+
+score.DA_up <- calculate_signature_score(as.data.frame(GEX.seur@assays[['RNA']]@data),
+                                         DEGs.DA_up)
+```{r}
+score.topic7 <- calculate_signature_score(log2(tpm.ss2+1),
+                                          topic.genes[[7]])
+score.topic4 <- calculate_signature_score(log2(tpm.ss2+1),
+                                          topic.genes[[4]])
+```
+```{r}
+score.topic7
+score.topic4
+```
+
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE, fig.width=4, fig.height=5}
+## violin plot
+vln.topic7_up_ss2 <- data.frame(Sample=c(rep("DA",3),rep("IL33",3)),
+                                score.topic7) %>%
+    ggplot(aes(Sample, score.topic7, color = Sample)) +
+    geom_boxplot() + geom_point() +
+    #ylim(c(-5.75, -4)) +
+    ggbeeswarm::geom_quasirandom(size = 0.01, width = 0.2, alpha = 0.3) +
+    stat_summary(fun=mean, geom="point", shape=18, size=3, color="black") +
+    ggpubr::stat_compare_means(aes(lable = ..p.signif..), 
+                               method = "t.test",
+                               comparisons = list(c("IL33","DA"))) +
+      scale_color_manual(values = c("#FDB911","#0000C8")) +
+    labs(x="") +
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          panel.background = element_blank(), 
+          panel.border = element_rect(fill = NA))
+vln.topic7_up_ss2 + NoLegend()
+```
+
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE, fig.width=4, fig.height=5}
+## violin plot
+vln.topic4_up_ss2 <- data.frame(Sample=c(rep("DA",3),rep("IL33",3)),
+                                score.topic4) %>%
+    ggplot(aes(Sample, score.topic4, color = Sample)) +
+    geom_boxplot() + geom_point() +
+    #ylim(c(-5.75, -4)) +
+    ggbeeswarm::geom_quasirandom(size = 0.01, width = 0.2, alpha = 0.3) +
+    stat_summary(fun=mean, geom="point", shape=18, size=3, color="black") +
+    ggpubr::stat_compare_means(aes(lable = ..p.signif..), 
+                               method = "t.test",
+                               comparisons = list(c("IL33","DA"))) +
+      scale_color_manual(values = c("#FDB911","#0000C8")) +
+    labs(x="") +
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          panel.background = element_blank(), 
+          panel.border = element_rect(fill = NA))
+vln.topic4_up_ss2 + NoLegend()
+```
+
+#### local code by me                 
+
+```{r}
+
+get.semi.random.OE <- function(r,genes.dist.q,b.sign,num.rounds = 1000,full.flag = F){
+  # Previous name: get.random.sig.scores
+  
+  # sign.q : count signature genes located in some bins
+  sign.q<-as.matrix(table(genes.dist.q[b.sign]))
+  # q : located bins
+  q<-rownames(sign.q)
+  idx.all<-c()
+  B<-matrix(data = F,nrow = length(genes.dist.q),ncol = num.rounds)
+  Q<-matrix(data = 0,nrow = length(genes.dist.q),ncol = num.rounds)   # Q has nothing to do here
+  
+  # B each col is an index for same number of genes randomly selected in same bins 
+  for (i in 1:nrow(sign.q)){
+    num.genes<-sign.q[i]
+    if(num.genes>0){
+      # index of all genes in that bin (q[i])
+      idx<-which(is.element(genes.dist.q,q[i]))
+      for (j in 1:num.rounds){
+        idxj<-sample(idx,num.genes) 
+        Q[i,j]<-sum(B[idxj,j]==T)    # stupid Q, always zero matrix, waste of time to doubt it
+        B[idxj,j]<-T
+      }  
+    }
+  }
+  rand.scores<-apply(B,2,function(x) colMeans(r$zscores[x,]))   # get mean of 'zscore's of one round
+  if(full.flag){return(rand.scores)}
+  rand.scores<-rowMeans(rand.scores)  # get mean of num.rounds rounds
+  return(rand.scores)
+}
+
+# input   
+# mat_e : expression matrix(CPM/TPM)  
+# cells_s : cells_selected(character vector)  
+# path_n : pathway_names(character list,path_o="pathwah way")    
+# gene_sign : list(path_o=path_g)  
+#    (path_o : pathway_names in short)   
+#    (path_g : genes in this pathway, character vector)   
+# seed_r : random seed  
+
+# output list:  
+#   list$stat : table of pathway/expressed genes  
+# list$OE : OE of sorted cells  
+# list$mat_z : Zscore of sorted cells/genes
+# list$bar : bar plot  
+# list$heat : heat map  
+
+# mod and debug: 
+#   unit var names and align dimensions  
+# pheat(modified by UncleY with additional class 'pheatmap' and par 'silent=T')  
+# but still pheat object can't plot in rmd, just use 'silent=F' ~  
+
+easy_OE <- function(mat_e,cells_s,path_n,gene_sign,seed_r=7788){
+  
+  ret <- list()
+  ret$tpm <- log2(mat_e[,cells_s]+1)
+  ret$tpm <- ret$tpm[rowSums(ret$tpm)>0,]
+  ret$genes <- rownames(ret$tpm)
+  
+  #
+  set.seed(seed_r)
+  
+  ret$genes.mean <- rowMeans(ret$tpm)
+  ret$genes.sd <- apply(ret$tpm,1,sd)
+  ret$zscores <- sweep(ret$tpm,1,ret$genes.mean,FUN='-')
+  ret$zscores <- sweep(ret$zscores,1,ret$genes.sd,FUN='/')
+  
+  ret$genes.dist <- ret$genes.mean
+  ret$genes.dist.q <- recipes::discretize(ret$genes.dist, n.cat=50)
+  ret$sig.scores <- matrix(data=0,nrow=ncol(ret$tpm),ncol=length(gene_sign))
+  
+  ret$sig.names <- names(gene_sign)   # path_o
+  colnames(ret$sig.scores) <- ret$sig.names
+  rownames(ret$sig.scores) <- colnames(ret$tpm)
+  
+  ret$sig.scores.raw <- ret$sig.scores
+  ret$sig.rand.scores <- ret$sig.scores
+  
+  ret$mat_z <- list()
+  ret$heat <- list()
+  ret$bar <- list()
+  
+  ret$stat <- list()
+  
+  for(i in ret$sig.names){
+    b.sign <- is.element(ret$genes, gene_sign[[i]])
+    
+    # scores
+    ret$sig.rand.scores[,i] <- get.semi.random.OE(ret,ret$genes.dist.q,b.sign,num.rounds=100)
+    ret$sig.scores.raw[,i] <- colMeans(ret$zscores[b.sign,])
+    ret$sig.scores[,i] <- ret$sig.scores.raw[,i]-ret$sig.rand.scores[,i]
+    ret$sig.scores[,i] <- round(ret$sig.scores[,i],3)
+    # ret$sig.scores[,i] <- sort(ret$sig.scores[,i],decreasing=TRUE)
+    # here can't sort, could only sort numbers but no names sorted, sort in OE barplot
+    new_order <- order(ret$sig.scores[,i],decreasing = T)
+    
+    # OE barplot    
+    ret$bar[[i]] <- ggplot(data=cbind.data.frame(Score=(ret$sig.scores[,i])[new_order],
+                                                 Name=factor(names(ret$sig.scores[,i])[new_order],levels=(names(ret$sig.scores[,i]))[new_order])),
+                           mapping=aes(x=Score,y=Name)) +
+      geom_bar(stat='identity') +
+      #coord_flip() +
+      labs(y="",x=paste0("Overall Expression of geneset:\n",path_n[[i]]))
+    
+    # mat_z
+    ret$mat_z[[i]] <- zscore_mat(ret$zscores[b.sign,])
+    
+    # sort genes by mean value distance: mean(OE>0) - mean(OE<0) 
+    idx_cells.up <- names(ret$sig.scores[,i][ret$sig.scores[,i]>0])
+    idx_cells.down <- names(ret$sig.scores[,i][ret$sig.scores[,i]<0])
+    
+    idx_genes <- rowSums(ret$mat_z[[i]][,idx_cells.up])-rowSums(ret$mat_z[[i]][,idx_cells.down])
+    idx_genes <- sort(idx_genes,decreasing=TRUE)
+    
+    ret$mat_z[[i]] <- ret$mat_z[[i]][names(idx_genes),rev((names(ret$sig.scores[,i]))[new_order])]
+    
+    
+    # mat_z heatmap
+    ret$heat[[i]] <- pheatmap::pheatmap(t(t(ret$mat_z[[i]])), cluster_cols=FALSE,cluster_rows=FALSE,fontsiize_row=7.5,
+                              main=paste0("Zscore of genes in geneset: ",path_n[[i]]),
+                              color=colorRampPalette(c("blue","white","red"))(100),
+                              breaks=seq(-2,2,0.04))
+    
+    # stat 
+    ret$stat[[i]] <- rbind("*** Stat Table ***",
+                           paste0("Pathway: ",path_n[[i]]),
+                           paste0("total genes: ",length(gene_sign[[i]])),
+                           paste0("expressed genes: ",sum(b.sign)),
+                           #paste(ret$genes[b.sign],collapse=" ")
+                           paste(rownames(ret$mat_z[[i]]),collapse=" ")
+    )
+  }
+  
+  
+  # output
+  rett <- list()
+  
+  rett$stat <- ret$stat
+  rett$OE <- ret$sig.scores
+  rett$mat_z <- ret$mat_z
+  rett$bar <- ret$bar
+  rett$heat <- ret$heat
+  
+  return(rett)
+}
+```
+
+```{r}
+topic7.d <- as.vector(unlist(topic.genes[[7]]))[as.vector(unlist(topic.genes[[7]])) %in% rownames(tpm.filt)]
+topic4.d <- as.vector(unlist(topic.genes[[4]]))[as.vector(unlist(topic.genes[[4]])) %in% rownames(tpm.filt)]
+
+OE_ss2.topic <- easy_OE(mat_e = as.data.frame(tpm.filt),
+               cells_s = colnames(tpm.ss2),
+               path_n = list(topic7="topic7",
+                             topic4="topic4"), 
+               gene_sign = list(topic7 = topic7.d,
+                                topic4 = topic4.d))
+```
+
+```{r}
+topic4.d %in% rownames(tpm.filt)
+topic7.d %in% rownames(tpm.filt)
+```
+
+
+
+#### on single cell            
+
+```{r}
+score.sc_topic7 <- calculate_signature_score(as.data.frame(GEX.seur@assays[['RNA']]@data),
+                                          topic.genes[[7]])
+score.sc_topic4 <- calculate_signature_score(as.data.frame(GEX.seur@assays[['RNA']]@data),
+                                          topic.genes[[4]])
+
+GEX.seur_score <- AddMetaData(GEX.seur_score,
+                              score.sc_topic7,
+                              "score.sc_topic7")
+GEX.seur_score <- AddMetaData(GEX.seur_score,
+                              score.sc_topic4,
+                              "score.sc_topic4")
+```
+```{r message=FALSE, warning=FALSE, paged.print=FALSE, fig.width=4, fig.height=5}
+## violin plot
+vln.topic7_up <- GEX.seur_score@meta.data %>%
+    ggplot(aes(SP.info, score.sc_topic7, color = SP.info)) +
+    geom_violin(draw_quantiles=c(0.25,0.75),trim = FALSE) +
+    #ylim(c(-0.25,0.35)) +
+    ggbeeswarm::geom_quasirandom(size = 0.01, width = 0.2, alpha = 0.3) +
+    stat_summary(fun=mean, geom="point", shape=18, size=3, color="black") +
+    ggpubr::stat_compare_means(aes(lable = ..p.signif..), 
+                               method = "wilcox.test",
+                               comparisons = list(c("IL-33","IL-33_DA"),
+                                                  c("IL-33","PBS"),
+                                                  c("PBS","IL-33_DA"))) +
+      scale_color_manual(values = c("#5A5C5F","#0000C8","#FDB911")) +
+    labs(x="") +
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          panel.background = element_blank(), 
+          panel.border = element_rect(fill = NA))
+vln.topic7_up + NoLegend()
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE, fig.width=4, fig.height=5}
+## violin plot
+vln.topic4_up <- GEX.seur_score@meta.data %>%
+    ggplot(aes(SP.info, score.sc_topic4, color = SP.info)) +
+    geom_violin(draw_quantiles=c(0.25,0.75),trim = FALSE) +
+    #ylim(c(-0.25,0.35)) +
+    ggbeeswarm::geom_quasirandom(size = 0.01, width = 0.2, alpha = 0.3) +
+    stat_summary(fun=mean, geom="point", shape=18, size=3, color="black") +
+    ggpubr::stat_compare_means(aes(lable = ..p.signif..), 
+                               method = "wilcox.test",
+                               comparisons = list(c("IL-33","IL-33_DA"),
+                                                  c("IL-33","PBS"),
+                                                  c("PBS","IL-33_DA"))) +
+      scale_color_manual(values = c("#5A5C5F","#0000C8","#FDB911")) +
+    labs(x="") +
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          panel.background = element_blank(), 
+          panel.border = element_rect(fill = NA))
+vln.topic4_up + NoLegend()
+```
+
+
+## others                  
+
+```{r}
+FeaturePlot(GEX.seur, features = c("Cd3g","Trac","Trdc","Trbc1"))
+```
+
+
+```{r fig.width=2,fig.height=2.7}
+label.genes <- c("Cd52","Ucp2","Arg1",
+                 #"Rbpj","Tnfsf8","Cd44","Laptm5","Cd83","Lgals3",
+                 "Klrg1","Lgals1","S100a6",
+                 "Crip1","S100a4","Vim")
+
+p_bar.t7 <- ggplot(data = plot.feat.topic %>% filter(topic=="topic_7" & genes %in% label.genes), aes(x = order, y = score)) +
+           geom_bar(stat = "identity") +
+           coord_flip() +
+           theme(axis.text.x = element_text(angle = 45, hjust = 1),
+                 axis.text = element_text(size = 10), text = element_text(size = 8),
+                 axis.line = element_line(colour = "black"),
+                 panel.grid.major = element_blank(),
+                 panel.grid.minor = element_blank(),
+                 panel.border = element_blank(),
+                 panel.background = element_blank(), strip.background = element_rect(color = "white", fill = "white")) +
+           #facet_wrap(~topic, scales="free", ncol = 4) +
+           scale_x_discrete(breaks = plot.feat.topic$order, labels = plot.feat.topic$genes) + labs(x="")
+  
+p_bar.t7        
+```
+
+```{r eval=FALSE, include=FALSE}
+#ggsave("topicmodel/K8/topic7_labelgenes.K8_tol0.1.pdf",
+ggsave("topicmodel/K8/topic7_labelgenes.K8_tol0.1.onlyDEG.pdf",
+       p_bar.t7,
+       width = 2,
+       height = 2.7)
+```
+
+### 1113 add                 
+
+```{r eval=FALSE, include=FALSE}
+for(t in 1:tk){
+  p_genes <- lapply(unlist(topic.genes[t]), function(y) plot.umap.feature(GEX.seur, y, "gene",
+                                                                          pt.size = 0.5,
+                                                                          ncols = 1, title = "expression") + theme(aspect.ratio = 0.75))
+  # arrange plots on a grid
+  cowplot::plot_grid(plotlist=p_genes, ncol=4)
+  
+  # ggsave
+  ggsave(paste0("topicmodel/K",tk,"/topics_top40_expression_on_UMAP_",tp[t],"_k",tk,"_tol0.1.pdf"),
+         width = 13, height = 20, units = "in")
+}
+```
+
+```{r fig.height=4, fig.width=2}
+idx.maxtopic7 <- rownames(GEX.seur@meta.data[GEX.seur$Anno_ILC2=="ILC2_5",])
+y <- as.vector(unlist(topic.genes[[7]][2]))
+data.frame(exp=as.vector(unlist(GEX.seur@assays[['RNA']]@data[y,idx.maxtopic7])),
+             cnt=GEX.seur$SP.info[GEX.seur$Anno_ILC2=="ILC2_5"]) %>%
+    ggplot(aes(cnt, exp, color = cnt)) +
+    geom_violin(draw_quantiles=c(0.25,0.75),trim = FALSE) +
+    #ylim(c(-0.25,0.35)) +
+    ggbeeswarm::geom_quasirandom(size = 0.01, width = 0.2, alpha = 0.3) +
+    stat_summary(fun=mean, geom="point", shape=18, size=3, color="black") +
+    ggpubr::stat_compare_means(aes(lable = ..p.signif..), 
+                               method = "wilcox.test",
+                               comparisons = list(c("IL-33","IL-33_DA"),
+                                                  c("IL-33","PBS"),
+                                                  c("PBS","IL-33_DA"))) +
+    scale_color_manual(values = c("#5A5C5F","#0000C8","#FDB911")) +
+    labs(x="", title = y) + theme_bw() +
+    theme(panel.grid =element_blank(), 
+                                      strip.background = element_rect(color = "white", fill = "white"),
+                                      panel.border = element_blank(),
+                                      axis.line = element_line(colour = "black")) + NoLegend()
+```
+
+
+```{r message=FALSE, warning=FALSE}
+idx.maxtopic7 <- rownames(GEX.seur@meta.data[GEX.seur$Anno_ILC2=="ILC2_5",])
+
+# topic7 genes on cluster ILC2_5 
+vln_genes.t7_c5 <- lapply(as.vector(unlist(topic.genes[7])), function(y){
+  data.frame(exp=as.vector(unlist(GEX.seur@assays[['RNA']]@data[y,idx.maxtopic7])),
+             cnt=GEX.seur$SP.info[GEX.seur$Anno_ILC2=="ILC2_5"]) %>%
+    ggplot(aes(cnt, exp, color = cnt)) +
+    geom_violin(draw_quantiles=c(0.25,0.75),trim = T) +
+    #ylim(c(-0.25,0.35)) +
+    ggbeeswarm::geom_quasirandom(size = 0.01, width = 0.2, alpha = 0.3) +
+    stat_summary(fun=mean, geom="point", shape=18, size=3, color="black") +
+    ggpubr::stat_compare_means(aes(lable = ..p.signif..), 
+                               method = "wilcox.test",
+                               comparisons = list(c("IL-33","IL-33_DA"),
+                                                  c("IL-33","PBS"),
+                                                  c("PBS","IL-33_DA"))) +
+    scale_color_manual(values = c("#5A5C5F","#0000C8","#FDB911")) +
+    labs(x="", y="Expression Level" ,title = y) + theme_bw() +
+    theme(panel.grid =element_blank(), 
+                                      strip.background = element_rect(color = "white", fill = "white"),
+                                      panel.border = element_blank(),
+                                      axis.line = element_line(colour = "black")) + NoLegend()
+  
+})
+```
+
+
+```{r fig.height=36, fig.width=8, message=FALSE, warning=FALSE}
+cowplot::plot_grid(plotlist=vln_genes.t7_c5, ncol=4)
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+ggsave(paste0("topicmodel/K",tk,"/comparison/comparison_topic7genes_cluster5.K",tk,"_tol0.1.wilcox.test.pdf"),
+       plot = cowplot::plot_grid(plotlist=vln_genes, ncol=4),
+       width = 8,
+       height = 36)
+```
+
+
+```{r message=FALSE, warning=FALSE}
+idx.maxtopic4 <- rownames(GEX.seur@meta.data[GEX.seur$Anno_ILC2=="ILC2_3",])
+
+# topic7 genes on cluster ILC2_5 
+vln_genes.t4_c3 <- lapply(as.vector(unlist(topic.genes[4])), function(y){
+  data.frame(exp=as.vector(unlist(GEX.seur@assays[['RNA']]@data[y,idx.maxtopic4])),
+             cnt=GEX.seur$SP.info[GEX.seur$Anno_ILC2=="ILC2_3"]) %>%
+    ggplot(aes(cnt, exp, color = cnt)) +
+    geom_violin(draw_quantiles=c(0.25,0.75),trim = T) +
+    #ylim(c(-0.25,0.35)) +
+    ggbeeswarm::geom_quasirandom(size = 0.01, width = 0.2, alpha = 0.3) +
+    stat_summary(fun=mean, geom="point", shape=18, size=3, color="black") +
+    ggpubr::stat_compare_means(aes(lable = ..p.signif..), 
+                               method = "wilcox.test",
+                               comparisons = list(c("IL-33","IL-33_DA"),
+                                                  c("IL-33","PBS"),
+                                                  c("PBS","IL-33_DA"))) +
+    scale_color_manual(values = c("#5A5C5F","#0000C8","#FDB911")) +
+    labs(x="", y="Expression Level" ,title = y) + theme_bw() +
+    theme(panel.grid =element_blank(), 
+                                      strip.background = element_rect(color = "white", fill = "white"),
+                                      panel.border = element_blank(),
+                                      axis.line = element_line(colour = "black")) + NoLegend()
+  
+})
+```
+
+
+```{r fig.height=36, fig.width=8, message=FALSE, warning=FALSE}
+cowplot::plot_grid(plotlist=vln_genes.t4_c3, ncol=4)
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+ggsave(paste0("topicmodel/K",tk,"/comparison/comparison_topic4genes_cluster3.K",tk,"_tol0.1.wilcox.test.pdf"),
+       plot = cowplot::plot_grid(plotlist=vln_genes.t4_c3, ncol=4),
+       width = 8,
+       height = 36)
+```
+
+
+## check 1118                 
+
+```{r}
+genes.1118 <- c("Gata3",paste0("Drd",1:5))
+genes.1118
+genes.1118 %in% rownames(GEX.seur)
+```
+
+
+```{r}
+FeaturePlot(GEX.seur, features = genes.1118)
+```
+
+
+
+
+
+

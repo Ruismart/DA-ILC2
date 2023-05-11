@@ -1,0 +1,490 @@
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#necessary packages and functions  
+source("I:/Shared_win/projects/RNA_normal/analysis.r")
+```
+
+
+```{r}
+tpm.ss2 <- read.table("I:/Shared_win/projects/20200812_ILC2_LY_RNAseq/analysis/RNAseq.20200812_ILC2.tpm.matrix", header = T)
+rownames(tpm.ss2) <- tpm.ss2$gene_id
+tpm.ss2 <- tpm.ss2[,2:ncol(tpm.ss2)]
+tpm.filt <- tpm.ss2[(rowSums(tpm.ss2[,1:3]>2) >=3) |
+                    (rowSums(tpm.ss2[,4:6]>2) >=3),]
+```
+
+
+
+```{r paged.print=FALSE}
+dim(tpm.filt)
+head(tpm.filt)
+```
+
+```{r}
+
+get.semi.random.OE <- function(r,genes.dist.q,b.sign,num.rounds = 1000,full.flag = F){
+  # Previous name: get.random.sig.scores
+  
+  # sign.q : count signature genes located in some bins
+  sign.q<-as.matrix(table(genes.dist.q[b.sign]))
+  # q : located bins
+  q<-rownames(sign.q)
+  idx.all<-c()
+  B<-matrix(data = F,nrow = length(genes.dist.q),ncol = num.rounds)
+  Q<-matrix(data = 0,nrow = length(genes.dist.q),ncol = num.rounds)   # Q has nothing to do here
+  
+  # B each col is an index for same number of genes randomly selected in same bins 
+  for (i in 1:nrow(sign.q)){
+    num.genes<-sign.q[i]
+    if(num.genes>0){
+      # index of all genes in that bin (q[i])
+      idx<-which(is.element(genes.dist.q,q[i]))
+      for (j in 1:num.rounds){
+        idxj<-sample(idx,num.genes) 
+        Q[i,j]<-sum(B[idxj,j]==T)    # stupid Q, always zero matrix, waste of time to doubt it
+        B[idxj,j]<-T
+      }  
+    }
+  }
+  rand.scores<-apply(B,2,function(x) colMeans(r$zscores[x,]))   # get mean of 'zscore's of one round
+  if(full.flag){return(rand.scores)}
+  rand.scores<-rowMeans(rand.scores)  # get mean of num.rounds rounds
+  return(rand.scores)
+}
+
+# input   
+# mat_e : expression matrix(CPM/TPM)  
+# cells_s : cells_selected(character vector)  
+# path_n : pathway_names(character list,path_o="pathwah way")    
+# gene_sign : list(path_o=path_g)  
+#    (path_o : pathway_names in short)   
+#    (path_g : genes in this pathway, character vector)   
+# seed_r : random seed  
+
+# output list:  
+#   list$stat : table of pathway/expressed genes  
+# list$OE : OE of sorted cells  
+# list$mat_z : Zscore of sorted cells/genes
+# list$bar : bar plot  
+# list$heat : heat map  
+
+# mod and debug: 
+#   unit var names and align dimensions  
+# pheat(modified by UncleY with additional class 'pheatmap' and par 'silent=T')  
+# but still pheat object can't plot in rmd, just use 'silent=F' ~  
+
+easy_OE <- function(mat_e,cells_s,path_n,gene_sign,seed_r=7788){
+  
+  ret <- list()
+  ret$tpm <- log2(mat_e[,cells_s]+1)
+  ret$tpm <- ret$tpm[rowSums(ret$tpm)>0,]
+  ret$genes <- rownames(ret$tpm)
+  
+  #
+  set.seed(seed_r)
+  
+  ret$genes.mean <- rowMeans(ret$tpm)
+  ret$genes.sd <- apply(ret$tpm,1,sd)
+  ret$zscores <- sweep(ret$tpm,1,ret$genes.mean,FUN='-')
+  ret$zscores <- sweep(ret$zscores,1,ret$genes.sd,FUN='/')
+  
+  ret$genes.dist <- ret$genes.mean
+  ret$genes.dist.q <- discretize(ret$genes.dist, n.cat=50)
+  ret$sig.scores <- matrix(data=0,nrow=ncol(ret$tpm),ncol=length(gene_sign))
+  
+  ret$sig.names <- names(gene_sign)   # path_o
+  colnames(ret$sig.scores) <- ret$sig.names
+  rownames(ret$sig.scores) <- colnames(ret$tpm)
+  
+  ret$sig.scores.raw <- ret$sig.scores
+  ret$sig.rand.scores <- ret$sig.scores
+  
+  ret$mat_z <- list()
+  ret$heat <- list()
+  ret$bar <- list()
+  
+  ret$stat <- list()
+  
+  for(i in ret$sig.names){
+    b.sign <- is.element(ret$genes, gene_sign[[i]])
+    
+    # scores
+    ret$sig.rand.scores[,i] <- get.semi.random.OE(ret,ret$genes.dist.q,b.sign,num.rounds=5)
+    ret$sig.scores.raw[,i] <- colMeans(ret$zscores[b.sign,])
+    ret$sig.scores[,i] <- ret$sig.scores.raw[,i]-ret$sig.rand.scores[,i]
+    ret$sig.scores[,i] <- round(ret$sig.scores[,i],3)
+    # ret$sig.scores[,i] <- sort(ret$sig.scores[,i],decreasing=TRUE)
+    # here can't sort, could only sort numbers but no names sorted, sort in OE barplot
+    new_order <- order(ret$sig.scores[,i],decreasing = T)
+    
+    # OE barplot    
+    ret$bar[[i]] <- ggplot(data=cbind.data.frame(Score=(ret$sig.scores[,i])[new_order],
+                                                 Name=factor(names(ret$sig.scores[,i])[new_order],levels=(names(ret$sig.scores[,i]))[new_order])),
+                           mapping=aes(x=Score,y=Name)) +
+      geom_bar(stat='identity') +
+      #coord_flip() +
+      labs(y="",x=paste0("Overall Expression of geneset:\n",path_n[[i]]))
+    
+    # mat_z
+    ret$mat_z[[i]] <- zscore_mat(ret$zscores[b.sign,])
+    
+    # sort genes by mean value distance: mean(OE>0) - mean(OE<0) 
+    idx_cells.up <- names(ret$sig.scores[,i][ret$sig.scores[,i]>0])
+    idx_cells.down <- names(ret$sig.scores[,i][ret$sig.scores[,i]<0])
+    
+    idx_genes <- rowSums(ret$mat_z[[i]][,idx_cells.up])-rowSums(ret$mat_z[[i]][,idx_cells.down])
+    idx_genes <- sort(idx_genes,decreasing=TRUE)
+    
+    ret$mat_z[[i]] <- ret$mat_z[[i]][names(idx_genes),rev((names(ret$sig.scores[,i]))[new_order])]
+    
+    
+    # mat_z heatmap
+    ret$heat[[i]] <- pheatmap::pheatmap(t(t(ret$mat_z[[i]])), cluster_cols=FALSE,cluster_rows=FALSE,fontsize_row=7.5,
+                              main=paste0("Zscore of genes in geneset: ",path_n[[i]]),
+                              color=colorRampPalette(c("blue","white","red"))(100),
+                              breaks=seq(-2,2,0.04))
+    
+    # stat 
+    ret$stat[[i]] <- rbind("*** Stat Table ***",
+                           paste0("Pathway: ",path_n[[i]]),
+                           paste0("total genes: ",length(gene_sign[[i]])),
+                           paste0("expressed genes: ",sum(b.sign)),
+                           #paste(ret$genes[b.sign],collapse=" ")
+                           paste(rownames(ret$mat_z[[i]]),collapse=" ")
+    )
+  }
+  
+  
+  # output
+  rett <- list()
+  
+  rett$stat <- ret$stat
+  rett$OE <- ret$sig.scores
+  rett$mat_z <- ret$mat_z
+  rett$bar <- ret$bar
+  rett$heat <- ret$heat
+  
+  return(rett)
+}
+```
+
+
+```{r}
+topic_genes <- read.table("topicmodel/K8/top100scores_k8_tol0.1.csv", header = T, sep = ",")
+topic_genes
+```
+
+```{r}
+length(topic_genes$topic_7)
+length(topic_genes$topic_4)
+```
+```{r}
+genes.topic7 <- sapply(topic_genes$topic_7, function(x) strsplit(x, " ")[[1]][2])[1:40]
+genes.topic4 <- sapply(topic_genes$topic_4, function(x) strsplit(x, " ")[[1]][2])[1:40]
+
+```
+
+
+
+```{r}
+OE_ss2.topic <- easy_OE(mat_e = tpm.filt,
+               cells_s = colnames(tpm.ss2),
+               path_n = list(topic7="topic7",
+                             topic4="topic4"), 
+               gene_sign = list(topic7=genes.topic7,
+                                topic4=genes.topic4))
+```
+
+```{r fig.width=2.3, fig.height=4}
+bar_ss2.t7 <- OE_ss2.topic$bar[[1]] + theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          panel.background = element_blank(), 
+          panel.border = element_rect(fill = NA))
+bar_ss2.t7
+```
+```{r fig.width=2.3, fig.height=4}
+bar_ss2.t4 <- OE_ss2.topic$bar[[2]] + theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          panel.background = element_blank(), 
+          panel.border = element_rect(fill = NA))
+bar_ss2.t4
+```
+
+```{r eval=FALSE, include=FALSE}
+ggsave("additional/bar_ss2.OE_sc10x_t7topgene.ttest.pdf",
+       plot = bar_ss2.t7,
+       width = 2.3,
+       height = 4)
+ggsave("additional/bar_ss2.OE_sc10x_t4topgene.ttest.pdf",
+       plot = bar_ss2.t4,
+       width = 2.3,
+       height = 4)
+```
+
+
+
+```{r}
+OE_ss2.topic$heat[[1]]
+```
+
+
+```{r}
+OE_ss2.topic$OE
+```
+
+
+```{r}
+OE1 <- reshape2::melt(OE_ss2.topic$OE)
+colnames(OE1) <- c("sample","geneset","OE_score")
+OE1$condition <- rep(c(rep("DA",3),
+                       rep("PBS",3)),2)
+OE1$condition <- factor(OE1$condition,levels=c("PBS","DA"))
+OE1
+```
+
+```{r}
+dat_mean1 <- OE1 %>%
+  group_by(condition,geneset) %>%
+  summarize(average = mean(OE_score)) %>% 
+  ungroup()
+```
+```{r}
+#OE1_t7 <- OE1 %>% filter(geneset=="topic7")
+#OE1_t7 <- factor(genes)
+```
+
+
+
+```{r fig.height=4, fig.width=3, message=FALSE, warning=FALSE}
+box_ss2.t7 <- ggplot(OE1 %>% filter(geneset=="topic7"), aes(x=condition, y=OE_score, fill=condition))+
+  ylim(c(-0.65,0.725)) +
+  geom_boxplot()+
+  geom_jitter() +
+  theme_bw()+
+  #facet_grid(rows = "geneset") +  
+  scale_fill_manual(values = c("#FDB911","#0000C8")[c(2,1)]) +
+  ggpubr::stat_compare_means(aes(lable = ..p.signif..), comparisons = list(c("DA","PBS")), method = "t.test") +
+  geom_point(data = dat_mean1 %>% filter(geneset=="topic7"), color=c(c("yellow"),c("lightblue"))[c(2,1)],
+             mapping = aes(x=condition,y=average))+ labs(title = "Overall Expression \nof sc10x topic7 top genes") +
+  theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          panel.background = element_blank(), 
+          panel.border = element_rect(fill = NA))
+box_ss2.t7
+```
+
+```{r fig.height=4, fig.width=3, message=FALSE, warning=FALSE}
+box_ss2.t4 <- ggplot(OE1 %>% filter(geneset=="topic4"), aes(x=condition, y=OE_score, fill=condition))+
+  ylim(c(-0.70,0.75)) +
+  geom_boxplot()+
+  geom_jitter() +
+  theme_bw()+
+  #facet_grid(rows = "geneset") +  
+  scale_fill_manual(values = c("#FDB911","#0000C8")[c(2,1)]) +
+  ggpubr::stat_compare_means(aes(lable = ..p.signif..), comparisons = list(c("DA","PBS")), method = "t.test") +
+  geom_point(data = dat_mean1 %>% filter(geneset=="topic4"), color=c(c("yellow"),c("lightblue"))[c(2,1)],
+             mapping = aes(x=condition,y=average))+ labs(title = "Overall Expression \nof sc10x topic4 top genes") +
+  theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          panel.background = element_blank(), 
+          panel.border = element_rect(fill = NA))
+box_ss2.t4
+```
+
+
+```{r eval=FALSE, include=FALSE}
+ggsave("additional/box_ss2.OE_sc10x_t7topgene.ttest.corrected_top40.pdf",
+       plot = box_ss2.t7,
+       width = 3,
+       height = 4)
+ggsave("additional/box_ss2.OE_sc10x_t4topgene.ttest.corrected_top40.pdf",
+       plot = box_ss2.t4,
+       width = 3,
+       height = 4)
+```
+
+
+
+```{r}
+OE_ss2.topic$OE
+```
+
+
+```{r}
+t.test(OE_ss2.topic$OE[1:3,1],OE_ss2.topic$OE[4:6,1])
+```
+
+
+```{r paged.print=FALSE}
+DEGs.LungILC2_DAvsPBS <- read.csv("SS2_data/DESeq2_DEGs_20210722.DA_vs_PBS.csv")
+rownames(DEGs.LungILC2_DAvsPBS) <- DEGs.LungILC2_DAvsPBS$gene
+head(DEGs.LungILC2_DAvsPBS)
+```
+
+```{r}
+finalplot <- function(Dat, Ret, Cnt, Pval, FC, Font=8, Sign=FALSE, Sign_dn = 10, Sign_up = 10, Label=NULL, padjust = TRUE){
+  
+  library(ggpubr)
+  library(ggthemes)
+  library(ComplexHeatmap)
+  
+  if(padjust==FALSE){
+    Ret$padj <- Ret$pvalue
+    volcanoy <- "- log10 pvalue"
+  }else{
+    volcanoy <- "- log10 p.adjust"
+  }
+  
+  Ret$pp <- -log10(Ret$padj)
+  Ret$Group <- "not_significant"
+  Ret$Group[which((Ret$padj < Pval) & (Ret$log2FoldChange > log2(FC)))] <- "up-regulated"
+  Ret$Group[which((Ret$padj < Pval) & (Ret$log2FoldChange < -log2(FC)))] <- "down-regulated"
+  
+  Ret$Genes <- ""
+  Genes_up <- rownames(Ret)[which((Ret$padj < Pval) & (Ret$log2FoldChange > log2(FC)))]
+  Genes_down <- rownames(Ret)[which((Ret$padj < Pval) & (Ret$log2FoldChange < -log2(FC)))]
+  
+  if(Sign==TRUE){
+    Ret$Genes[match(c(Genes_up,Genes_down),rownames(Ret))] <- c(Genes_up,Genes_down)
+    Marker <- c(Genes_up,Genes_down)
+  }else{
+    #Genes_up_top <- rownames(Ret[Ret$log2FoldChange>0,])[head(order(Ret[Ret$log2FoldChange>0,]$padj,decreasing = F),Sign_up)]
+    #Genes_down_top <- rownames(Ret[Ret$log2FoldChange<0,])[head(order(Ret[Ret$log2FoldChange<0,]$padj,decreasing = F),Sign_dn)]
+    #Genes_up_top <- rownames(Ret %>% filter(log2FoldChange > log2(FC)) %>% arrange(padj))[1:Sign_up]
+    #Genes_down_top <- rownames(Ret %>% filter(log2FoldChange < -log2(FC)) %>% arrange(padj))[1:Sign_dn]
+    Genes_up_top <- Genes_up[1:Sign_up]
+    Genes_down_top <- Genes_down[1:Sign_dn]
+    
+    Marker <- c(Genes_up_top,Genes_down_top)
+    for(M in Marker){
+      Ret$Genes[rownames(Ret)==M] <- M
+    }
+  }
+  
+  # for custom labeled genes, 20210323 added
+  if(!is.null(Label)){
+    Ret$Genes <- ""
+    for(M in Label){
+      Ret$Genes[rownames(Ret)==M] <- M
+    }
+  }
+  
+  
+  
+  volplot <- ggscatter(Ret, x = "log2FoldChange", y = "pp", color = "Group",
+                       palette = c("#2f5688","#BBBBBB","#CC0000"),size = 1.5,
+                       #label = "Genes",
+                       font.label = Font, repel = F,
+                       xlab = "log2 fold change", ylab=volcanoy) + theme_classic() +
+    geom_text_repel(mapping = aes(x = Ret$log2FoldChange, y = Ret$pp, label = Ret$Genes), 
+                    max.overlaps = 500, label.size = 0.15) +
+    guides(color=guide_legend(reverse=TRUE,title = Cnt)) +
+    geom_vline(xintercept = c(-log2(FC),log2(FC)), linetype="dashed") +
+    geom_hline(yintercept = -log10(Pval), linetype="dashed") 
+  #volplot
+  
+  Ret_mat <- Dat[c(Genes_up,Genes_down),]
+  Ret_cor <- cor(Ret_mat)
+  
+  lower = 0
+  upper = 1
+  pal <- "Reds"
+  
+  ht1 <- Heatmap(Ret_cor, col = circlize::colorRamp2(seq(lower, upper, ((upper-lower)/7)),RColorBrewer::brewer.pal(8, pal)),
+                 heatmap_legend_param = list(
+                   color_bar = "continuous",
+                   legend_direction = "horizontal",
+                   legend_width = unit(5, "cm"),
+                   title_position = "topcenter"),
+                 name = "Pearson correlation",
+                 column_names_gp = gpar(fontsize = 10),
+                 row_names_gp = gpar(fontsize = 10),
+                 top_annotation = NULL)
+  heatplot <- draw(ht1, heatmap_legend_side = "top")
+  
+  
+  Genes_len <- cat("P: ",Pval,", ","FC: ",FC,"\n\n",
+                   "up: ",length(Genes_up),"\n","down: ",length(Genes_down),"\n","total: ",length(c(Genes_up,Genes_down)),
+                   "\n",sep="")
+  
+  
+  
+  final_sig <- list(up= Genes_up, down=Genes_down, len=Genes_len, vol=volplot, heat=heatplot, marker=Marker)
+  return(final_sig)  
+}
+```
+
+
+```{r fig.height=3.2, fig.width=4.2, message=FALSE, warning=FALSE}
+Aname="DA"
+Bname="PBS"
+
+rets_t7 <- finalplot(as.matrix(tpm.ss2),data.frame(DEGs.LungILC2_DAvsPBS), paste0(Aname,"_vs_",Bname), 0.05, 2, 
+                  Sign = FALSE, Sign_dn = 25, Sign_up = 25, padjust = TRUE, 
+                  Label = genes.topic7[genes.topic7 %in% DEGs.LungILC2_DAvsPBS$gene])
+```
+
+
+```{r}
+sum(genes.topic7 %in% DEGs.LungILC2_DAvsPBS$gene)
+genes.topic7 %in% DEGs.LungILC2_DAvsPBS$gene
+```
+
+```{r echo=FALSE, fig.height=8, fig.width=10, warning=FALSE}
+rets_t7$vol
+```
+
+```{r fig.height=3.2, fig.width=4.2, message=FALSE, warning=FALSE}
+Aname="DA"
+Bname="PBS"
+
+rets_t4 <- finalplot(as.matrix(tpm.ss2),data.frame(DEGs.LungILC2_DAvsPBS), paste0(Aname,"_vs_",Bname), 0.05, 2, 
+                  Sign = FALSE, Sign_dn = 25, Sign_up = 25, padjust = TRUE, 
+                  Label = genes.topic4[genes.topic4 %in% DEGs.LungILC2_DAvsPBS$gene])
+```
+
+
+```{r}
+sum(genes.topic4 %in% DEGs.LungILC2_DAvsPBS$gene)
+genes.topic4 %in% DEGs.LungILC2_DAvsPBS$gene
+```
+
+```{r echo=FALSE, fig.height=10, fig.width=12, warning=FALSE}
+rets_t4$vol
+```
+
+```{r echo=FALSE, fig.height=8, fig.width=10, warning=FALSE}
+rets_t7$vol
+```
+
+```{r eval=FALSE, include=FALSE}
+ggsave("additional/volcano_ss2.sc10x_t7topgene.pdf",
+       plot = rets_t7$vol,
+       width = 15,
+       height = 12)
+ggsave("additional/volcano_ss2.sc10x_t4topgene.pdf",
+       plot = rets_t4$vol,
+       width = 15,
+       height = 12)
+```
+
+
+
+```{r}
+OE_ss2.topic$heat[[1]]
+```
+
+```{r eval=FALSE, include=FALSE}
+ggsave("additional/heatmap_ss2.sc10x_t7topgene.pdf",
+       plot = OE_ss2.topic$heat[[1]],
+       width = 4.5,
+       height = 6)
+ggsave("additional/heatmap_ss2.sc10x_t4topgene.pdf",
+       plot = OE_ss2.topic$heat[[2]],
+       width = 4.5,
+       height = 6)
+```
+

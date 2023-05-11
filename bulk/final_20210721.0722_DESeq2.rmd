@@ -1,0 +1,651 @@
+---
+output:
+  html_document:
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+---
+
+# RNAseq downstream analysis      
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#necessary packages and functions  
+source("I:/Shared_win/projects/RNA_normal/analysis.r")
+#source("analysis.r")
+```
+
+
+## load expression mtx       
+
+```{r echo=FALSE}
+# specify matrix path and name to save files then
+dat = '../analysis/RNAseq.20200812_ILC2.counts.matrix'
+mtxname = 'ILC2_DA_vs_PBS'
+
+
+# specify names of 'A vs B', and cell idx of As and Bs
+Aname = "DA" 
+Bname = "PBS"  
+
+Aidx = c(1:3)
+Bidx = c(4:6)
+
+# specify filtering cutoffs
+cut_count = 2 
+cut_cell = 3
+
+#
+mat_raw <- read.table(dat, header = TRUE, stringsAsFactors = F , sep = "\t")
+rownames(mat_raw) <- mat_raw$gene_id
+mat_raw <- mat_raw[,2:ncol(mat_raw)]
+
+mat_raw <- edgeR::cpm(mat_raw)
+
+# round the reads count from rsem output
+mat_raw <- round(mat_raw)
+
+# choose only protein_coding genes
+list_pc <- 'I:/Shared_win/genomics/mouse/GRCm38_vM25/gtf_detail/list_pc.lv1_2'
+id_pc <- as.vector(unlist(read.table(list_pc)))
+mat_pc <- mat_raw[id_pc,]
+
+# filter for genes that expressed (CPM > 2) in at least 3 cells
+mat_pc <- mat_pc[rowSums(mat_pc[,c(Aidx,Bidx)] >cut_count) >= cut_cell,]
+#mat_pc <- mat_pc[rowSums(mat_pc[,c(Aidx)] >cut_count) >= cut_cell |
+#                   rowSums(mat_pc[,c(Bidx)] >cut_count) >= cut_cell,]
+matz_pc <- zscore_mat(log2(mat_pc+1))
+```
+
+
+check raw counts matrix       
+```{r}
+dim(mat_raw)
+head(mat_raw)
+```
+       
+check filtered pc(protein coding) matrix        
+```{r}
+dim(mat_pc[,c(Aidx,Bidx)])
+head(mat_pc[,c(Aidx,Bidx)])
+``` 
+
+
+```{r echo=FALSE}
+cat(paste0("get ",dim(mat_pc)[1]," filtered (cpm > ",cut_count," in at least ",cut_cell," cells) protein-coding genes for next analysis"))
+```
+
+
+## QC  
+
+design info  
+```{r echo=FALSE, paged.print=FALSE}
+design <- data.frame(condition=factor(c(rep(Aname,length(Aidx)),rep(Bname,length(Bidx)))),
+#                     replicate=factor(c(paste0("rep",1:length(Aidx)),paste0("rep",1:length(Bidx)))))
+                     replicate=factor(colnames(mat_pc[,c(Aidx,Bidx)])))
+#rownames(design) <- rownames(design0)[c(Aidx,Bidx)]
+
+#design0
+design
+```
+
+
+### condition mean expression              
+
+```{r cross1, echo=FALSE, fig.height=6, fig.width=6, warning=FALSE}
+plot(data.frame(Aname=rowMeans(mat_raw[rowSums(mat_raw[,c(Aidx,Bidx)])!=0,][,Aidx]),
+                Bname=rowMeans(mat_raw[rowSums(mat_raw[,c(Aidx,Bidx)])!=0,][,Bidx])), pch=20, log = 'xy',
+     xlab = paste0("Mean normalized counts (",Aname,")"),xlim=c(0.1,100000),
+     ylab = paste0("Mean normalized counts (",Bname,")"),ylim=c(0.1,100000),
+     main = paste0("expressed ",dim(mat_raw[rowSums(mat_raw)!=0,])[1]," genes of total ",dim(mat_raw)[1]," genes "))
+```
+
+```{r eval=FALSE, include=FALSE}
+pdf(file = "./figures/condition_mean_1.pdf",
+    height = 6, width = 6)
+plot(data.frame(Aname=rowMeans(mat_raw[rowSums(mat_raw[,c(Aidx,Bidx)])!=0,][,Aidx]),
+                Bname=rowMeans(mat_raw[rowSums(mat_raw[,c(Aidx,Bidx)])!=0,][,Bidx])), pch=20, log = 'xy',
+     xlab = paste0("Mean normalized counts (",Aname,")"),xlim=c(0.1,100000),
+     ylab = paste0("Mean normalized counts (",Bname,")"),ylim=c(0.1,100000),
+     main = paste0("expressed ",dim(mat_raw[rowSums(mat_raw)!=0,])[1]," genes of total ",dim(mat_raw)[1]," genes "))
+dev.off()
+
+```
+
+
+
+```{r cross2, echo=FALSE, fig.height=6, fig.width=6, warning=FALSE}
+plot(data.frame(Aname=rowMeans(mat_pc[,Aidx]),
+                Bname=rowMeans(mat_pc[,Bidx])), pch=20, log = 'xy',
+     xlab = paste0("Mean normalized counts (",Aname,")"),xlim=c(0.1,100000),
+     ylab = paste0("Mean normalized counts (",Bname,")"),ylim=c(0.1,100000),
+     main = paste0(dim(mat_pc)[1]," filtered protein coding genes "))
+```
+
+```{r eval=FALSE, include=FALSE}
+pdf(file = "./figures/condition_mean_2.pdf",
+    height = 6, width = 6)
+plot(data.frame(Aname=rowMeans(mat_pc[,Aidx]),
+                Bname=rowMeans(mat_pc[,Bidx])), pch=20, log = 'xy',
+     xlab = paste0("Mean normalized counts (",Aname,")"),xlim=c(0.1,100000),
+     ylab = paste0("Mean normalized counts (",Bname,")"),ylim=c(0.1,100000),
+     main = paste0(dim(mat_pc)[1]," filtered protein coding genes "))
+dev.off()
+
+```
+
+
+### PCA          
+
+```{r include=FALSE}
+rv <- rowVars(mat_pc[,c(Aidx,Bidx)])
+selt <- order(rv, decreasing = TRUE)[seq_len(2000)]
+pca2 <- stats::prcomp(t(mat_pc[selt,c(Aidx,Bidx)]), scale.=TRUE, center= TRUE)
+#pca2$x
+
+pca_d <- as.data.frame(pca2$x)
+
+pca_d[,"condition"] = design$condition
+pca_d[,"batch"] = colnames(mat_pc)
+pca_d[,"replicate"] = pca_d$replicate
+```
+
+
+```{r echo=FALSE}
+plot(pca2$sdev,pch=20, xlab="PC",ylab="Standard Variation", main="PCs of top2000 highly variable genes")
+```
+
+```{r eval=FALSE, include=FALSE}
+pdf(file = "./figures/PCs.pdf",
+    height = 4.5, width = 6)
+plot(pca2$sdev,pch=20, xlab="PC",ylab="Standard Variation", main="PCs of top2000 highly variable genes")
+dev.off()
+
+```
+
+
+
+```{r echo=FALSE, fig.height=4.5, fig.width=6, message=FALSE, warning=FALSE}
+#plot the PCA
+#create a classic 2-dimension PCA plot (first two principal components) with conditions and library methods indicated
+cols <- c("#481567FF","#1F968BFF","#B5640B")
+#cols <- c("Gut" = cols[1], "Lung" = cols[2], "Meninges"=cols[3])
+cols <- c(cols[3], cols[2])
+names(cols) <- c(as.character(unique(design$condition)[1]),as.character(unique(design$condition)[2]))
+
+#p1 = ggplot(data=pca_d, aes(x=PC1, y=PC2, color=condition, shape=condition))
+p1 = ggplot(data=pca_d, aes(x=PC1, y=PC2, color=condition))
+p1 = p1 + geom_point(size=3.5)
+p1 = p1 + ggrepel::geom_text_repel(mapping = aes(label=pca_d$batch),size=2.5)
+#p1 = p1 + stat_ellipse(type="norm", linetype=2)
+p1 = p1 + labs(title="PCA\nusing CPM(top2000 highly variable genes) ",
+               color="Condition", shape="batch")
+p1 = p1 + scale_colour_manual(values = cols) 
+#p1 = p1 + scale_shape_manual(values=c(16,17,15))
+p1
+```
+
+```{r eval=FALSE, include=FALSE}
+ggsave("figures/PCA_raw.pdf",
+       plot = p1,
+       height = 4.8,
+       width = 6)
+```
+
+##### PCA summary                 
+
+```{r echo=FALSE}
+# where to get that variance ??? 
+summary(pca2)
+```
+
+##### with ellipse, ellipse.prob = 0.68          
+
+```{r}
+library(ggplot2)
+```
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=4.5, fig.width=4.5}
+# 1124 modify
+pca2.p <- ggbiplot::ggbiplot(pca2, obs.scale = 1, var.scale = 0, labels.size = 5,
+                   groups = design$condition, ellipse = TRUE,ellipse.prob = 0.68, var.axes = F) + 
+          labs(x="PC1: 70.0% variance", y="PC2: 16.1% variance", 
+               title = "") +
+  geom_point(aes(colour=design$condition), size = 4.2) +
+  theme_bw() + theme(aspect.ratio = 0.96, 
+                     panel.grid.major = element_blank(),
+                     panel.grid.minor = element_blank(),
+                     #panel.border = element_blank(),
+                     panel.background = element_blank()) +
+  scale_color_manual(values = c("#FDB911","#0000C8"), guide = guide_legend(reverse = TRUE)) 
+pca2.p
+```
+
+
+```{r eval=FALSE, include=FALSE}
+ggsave("figures_mod1124/PCA_with_ellipse.mod20211125.small.pdf",
+       plot = last_plot(),
+       height = 4.5,
+       width =4.5)
+```
+
+
+### correlation        
+
+```{r include=FALSE}
+#define a function to plot correlation  
+plotCor <- function(Mat){
+  library(edgeR)
+  library(corrplot)
+  Cor <- cor(log2(edgeR::cpm(Mat)+1))
+  par(cex=0.84, pin=c(8,8))
+  corrplot(Cor,method="number",title = "pearson correlation of log2(CPM+1)",mar = c(0, 0, 1, 0))
+}
+```
+
+
+##### correlation (log2(CPM+1)) of all filtered protein-coding genes  
+```{r eval=FALSE, fig.height=4.8, fig.width=4.8, message=FALSE, warning=FALSE, include=FALSE}
+plotCor(mat_pc)
+```
+
+
+```{r echo=FALSE,message=FALSE,warning=FALSE,fig.width=4.8,fig.height=4.8}
+  Ret_mat <- log2(mat_pc[,c(Aidx,Bidx)]+1)
+  Ret_cor <- cor(Ret_mat)
+  
+  lower = 0.75
+  upper = 1
+  pal <- "Reds"
+  
+  ht1 <- ComplexHeatmap::Heatmap(Ret_cor, col = circlize::colorRamp2(seq(lower, upper, ((upper-lower)/7)),RColorBrewer::brewer.pal(8, pal)),
+                  heatmap_legend_param = list(
+                  color_bar = "continuous",
+                  legend_direction = "horizontal",
+                  legend_width = unit(5, "cm"),
+                  title_position = "topcenter"),
+                  name = "Pearson correlation",
+                  column_names_gp = grid::gpar(fontsize = 10),
+                  row_names_gp = grid::gpar(fontsize = 10),
+                  top_annotation = NULL)
+  heatplot1 <- ComplexHeatmap::draw(ht1, heatmap_legend_side = "top")
+``` 
+
+```{r eval=FALSE, include=FALSE}
+pdf(file = "./figures/correlation.all_filtered_protein_coding.pdf",
+    height = 4.8, width = 4.8)
+heatplot1
+dev.off()
+
+```
+
+
+##### correlation (log2(CPM+1)) of top2000 highly variable genes             
+
+```{r echo=FALSE,message=FALSE,warning=FALSE,fig.width=4.8,fig.height=4.8}
+  Ret_mat <- log2(mat_pc[selt,c(Aidx,Bidx)]+1)
+  Ret_cor <- cor(Ret_mat)
+  
+  lower = 0.75
+  upper = 1
+  pal <- "Reds"
+  
+  ht1 <- ComplexHeatmap::Heatmap(Ret_cor, col = circlize::colorRamp2(seq(lower, upper, ((upper-lower)/7)),RColorBrewer::brewer.pal(8, pal)),
+                  heatmap_legend_param = list(
+                  color_bar = "continuous",
+                  legend_direction = "horizontal",
+                  legend_width = unit(5, "cm"),
+                  title_position = "topcenter"),
+                  name = "Pearson correlation",
+                  column_names_gp = grid::gpar(fontsize = 10),
+                  row_names_gp = grid::gpar(fontsize = 10),
+                  top_annotation = NULL)
+  heatplot2 <- ComplexHeatmap::draw(ht1, heatmap_legend_side = "top")
+``` 
+
+```{r eval=FALSE, include=FALSE}
+pdf(file = "./figures/correlation.top2000_hvg.pdf",
+    height = 4.8, width = 4.8)
+heatplot2
+dev.off()
+```
+
+
+## Differential Analysis                
+
+
+```{r eval=FALSE, include=FALSE}
+ret <- run_MEedgeR(MAT = mat_pc[,c(Aidx,Bidx)], ED = Aname, WT = Bname, n1 = length(Aidx),n2 = length(Bidx),
+                         lcm = 10, padj = 0.05,lfc = log2(2), gsea = TRUE)
+```
+
+```{r eval=FALSE, include=FALSE}
+ret$DEG_edgeR
+```
+
+using old DESeq2 DEG result        
+
+```{r include=FALSE}
+DEG_deseq2 <- read.table("../20200922_results/diff_DESeq/DEG_DESeq2.csv",sep = ",", header = T)
+colnames(DEG_deseq2)[1] <- "gene"
+rownames(DEG_deseq2) <- DEG_deseq2$gene
+DEG_deseq2 <- DEG_deseq2 %>% filter(gene %in% rownames(mat_pc))
+dim(DEG_deseq2)
+head(DEG_deseq2)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+ret$SUM[1:4,,drop=F]
+```
+
+##### using DESeq2        
+```{r echo=FALSE}
+cat("DA vs PBS \nDEGs: ",dim(DEG_deseq2 %>% filter(padj <0.05) %>% filter(log2FoldChange >1 | log2FoldChange < -1))[1],
+    "\n  up: ",dim(DEG_deseq2 %>% filter(padj <0.05) %>% filter(log2FoldChange >1))[1],
+    "\ndown: ",dim(DEG_deseq2 %>% filter(padj <0.05) %>% filter(log2FoldChange < -1))[1])
+```
+
+
+Note:         
+this is the old DEGs result (20200922) of differential analysis with DESeq2.       
+        
+      
+
+
+
+##### using cutoff: p.adjust <0.05, FC >2         
+
+this cor heatmap is using DEGs 
+
+
+```{r fig.height=5.2, fig.width=5.2, message=FALSE, warning=FALSE, include=FALSE}
+rets <- finalplot(mat_raw[,c(Aidx,Bidx)],data.frame(DEG_deseq2), paste0(Aname,"_vs_",Bname), 0.05, 2, 
+                  Sign = FALSE, Sign_dn = 20, Sign_up = 20, padjust = TRUE)
+```
+
+
+
+##### correlation (log2(CPM+1)) of 1,080 DESeq2 DEGs             
+```{r echo=FALSE,message=FALSE,warning=FALSE,fig.width=4.8,fig.height=4.8}
+  Ret_mat <- log2(mat_raw[c(rets$up,rets$down),c(Aidx,Bidx)]+1)
+  Ret_cor <- cor(Ret_mat)
+  
+  lower = 0.75
+  upper = 1
+  pal <- "Reds"
+  
+  ht1 <- ComplexHeatmap::Heatmap(Ret_cor, col = circlize::colorRamp2(seq(lower, upper, ((upper-lower)/7)),RColorBrewer::brewer.pal(8, pal)),
+                  heatmap_legend_param = list(
+                  color_bar = "continuous",
+                  legend_direction = "horizontal",
+                  legend_width = unit(5, "cm"),
+                  title_position = "topcenter"),
+                  name = "Pearson correlation",
+                  column_names_gp = grid::gpar(fontsize = 10),
+                  row_names_gp = grid::gpar(fontsize = 10),
+                  top_annotation = NULL)
+  heatplot3 <- ComplexHeatmap::draw(ht1, heatmap_legend_side = "top")
+``` 
+
+```{r eval=FALSE, include=FALSE}
+pdf(file = "./figures_DESeq2//correlation.DESeq2_DEGs.pdf",
+    height = 4.8, width = 4.8)
+heatplot3
+dev.off()
+```
+
+### volcano plot        
+
+##### p.adjust top25 labeled, volcano (non-proteincoding removed)          
+
+```{r fig.height=5.2, fig.width=5.2, message=FALSE, warning=FALSE, include=FALSE}
+rets <- finalplot(mat_raw[,c(Aidx,Bidx)],data.frame(DEG_deseq2), paste0(Aname,"_vs_",Bname), 0.05, 2, 
+                  Sign = FALSE, Sign_dn = 25, Sign_up = 25, padjust = TRUE, Label = c(rets$up[1:25],rets$down[1:25]))
+```
+
+```{r echo=FALSE, fig.height=15, fig.width=15, warning=FALSE}
+rets$vol
+```
+
+```{r eval=FALSE, include=FALSE}
+pdf(file = "./figures_DESeq2//volcano_DESeq2.top25_label.pdf",
+    height = 9, width = 12)
+rets$vol
+dev.off()
+```
+
+
+##### genes to label        
+         
+reported ILC2 related :        
+Pdcd1, Il1r2, Arg1, Ltb4r1, Tnfrsf4, Bmp2, Tnfaip3, Il7r        
+           
+ILC2 non-related but Th2/asthma related:           
+Txn1, Il21r, Rasa3, Dock2              
+          
+energy related :            
+Ndufc2, Mrps12, Cisd1, Atp5e, Txn1, Tprt, Dynlt1b, Phgdh, Nr1d2              
+
+
+```{r echo=FALSE}
+glist1 <- c("Pdcd1","Il1r2","Arg1","Ltb4r1","Tnfrsf4","Bmp2","Tnfaip3","Il7r")
+glist2 <- c("Txn1","Il21r","Rasa3","Dock2")
+glist3 <- c("Ndufc2","Mrps12","Cisd1","Atp5e","Txn1","Aprt","Dynlt1b","Phgdh","Nr1d2")
+```
+
+##### if labeled genes in top25       
+```{r echo=FALSE}
+glist1 %in% c(rets$up[1:25],rets$down[1:25])
+glist2 %in% c(rets$up[1:25],rets$down[1:25])
+glist3 %in% c(rets$up[1:25],rets$down[1:25])
+```
+
+##### if labeled genes in top30       
+```{r echo=FALSE}
+glist1 %in% c(rets$up[1:30],rets$down[1:30])
+glist2 %in% c(rets$up[1:30],rets$down[1:30])
+glist3 %in% c(rets$up[1:30],rets$down[1:30])
+```
+
+only show top 25, no Dynlt1b.         
+
+```{r include=FALSE}
+glist <- unique(c(glist1,glist2,glist3))
+glist.up <- glist[glist %in% rets$up[1:25]]
+glist.dn <- glist[glist %in% rets$down[1:25]]
+```
+
+
+###### using top25 heatmap       
+
+```{r eval=FALSE, include=FALSE}
+length(unique(c(glist1,glist2,glist3)))
+```
+
+```{r fig.height=5.2, fig.width=5.2, message=FALSE, warning=FALSE, include=FALSE}
+rets_1 <- finalplot(mat_raw[,c(Aidx,Bidx)],data.frame(DEG_deseq2), paste0(Aname,"_vs_",Bname), 0.05, 2, 
+                  Sign = FALSE, Sign_dn = 25, Sign_up = 25, padjust = TRUE, Label = c(glist.up,glist.dn))
+```
+
+
+##### specified DEGs (total 19) to label                                   
+
+```{r echo=FALSE, fig.height=15, fig.width=15, warning=FALSE}
+rets_1$vol
+```
+
+```{r eval=FALSE, include=FALSE}
+pdf(file = "./figures_DESeq2//volcano_DESeq2.specified_label.pdf",
+    height = 9, width = 12)
+rets_1$vol
+dev.off()
+```
+
+```{r eval=FALSE, include=FALSE}
+pdf(file = "./figures_DESeq2//volcano_DESeq2.specified_label.small.pdf",
+    height = 4.8, width = 6.9)
+rets_1$vol
+dev.off()
+```
+
+### heatmap         
+
+```{r echo=FALSE, fig.height=7.6, fig.width=4.8}
+genes <- c(rets$up[1:25],rets$down[1:25])
+pheatmap(log2(mat_raw[genes,c(Aidx,Bidx)]+1),cluster_rows = F, cluster_cols = F,
+         main = "top25 log2(CPM+1)", gaps_row = c(25), gaps_col = length(Aidx))
+```
+
+```{r echo=FALSE, fig.height=7.6, fig.width=4.8}
+pheatmap(zscore_mat(log2(mat_raw[genes,c(Aidx,Bidx)]+1)),cluster_rows = F, cluster_cols = F,
+         main = "top25 zscore", gaps_row = c(25), gaps_col = length(Aidx))
+```
+
+color modified.         
+
+```{r echo=FALSE, fig.height=7.6, fig.width=4.8}
+color.test <- colorRampPalette(
+    c(
+      "#03047F", # deep blue
+      "white",
+      "#CC2627"  # deep red
+    )
+  )(100)
+
+
+pheatmap(zscore_mat(log2(mat_raw[genes,c(Aidx,Bidx)]+1)),cluster_rows = F, cluster_cols = F,
+         main = "top25 zscore", gaps_row = c(25), gaps_col = length(Aidx), color = color.test)
+
+pheatmap(zscore_mat(log2(mat_raw[genes,c(Aidx,Bidx)]+1)),cluster_rows = T, cluster_cols = T,
+         main = "top25 zscore", 
+         #gaps_row = c(25), 
+         #gaps_col = length(Aidx), 
+         color = color.test)
+```
+
+
+```{r  echo=FALSE, fig.height=4.6, fig.width=4.8}
+lab1 <- c(glist1[glist1 %in% rets$up],glist1[glist1 %in% rets$down])
+lab2 <- c(glist2[glist2 %in% rets$up],glist2[glist2 %in% rets$down])  
+lab3 <- c(glist3[glist3 %in% rets$up],glist3[glist3 %in% rets$down])   
+
+pheatmap(zscore_mat(log2(mat_raw[c(lab1,lab2,lab3),c(Aidx,Bidx)]+1)),cluster_rows = F, cluster_cols = F,
+         main = " ", 
+         gaps_row = c(length(lab1),length(c(lab1,lab2))), 
+         gaps_col = length(Aidx), color = color.test)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+pdf(file = "./figures_DESeq2/heatmap1_top25.noclust.pdf",
+    height = 7.6, width = 4.8)
+pheatmap(zscore_mat(log2(mat_raw[genes,c(Aidx,Bidx)]+1)),cluster_rows = F, cluster_cols = F,
+         main = "top25 zscore", gaps_row = c(25), gaps_col = length(Aidx), color = color.test)
+dev.off()
+```
+
+```{r eval=FALSE, include=FALSE}
+pdf(file = "./figures_DESeq2/heatmap2_top25.clust.pdf",
+    height = 7.6, width = 4.8)
+pheatmap(zscore_mat(log2(mat_raw[genes,c(Aidx,Bidx)]+1)),cluster_rows = T, cluster_cols = T,
+         main = "top25 zscore", color = color.test)
+dev.off()
+```
+
+```{r eval=FALSE, include=FALSE}
+pdf(file = "./figures_DESeq2/heatmap3_three_list.pdf",
+    height = 4.6, width = 4.8)
+pheatmap(zscore_mat(log2(mat_raw[c(lab1,lab2,lab3),c(Aidx,Bidx)]+1)),cluster_rows = F, cluster_cols = F,
+         main = " ", 
+         gaps_row = c(length(lab1),length(c(lab1,lab2))), 
+         gaps_col = length(Aidx), color = color.test)
+dev.off()
+```
+
+
+
+
+### GSEA enrichment         
+
+hallmark_filtered_genes
+
+```{r include=FALSE}
+gsea_up_hm_gene <- read.table("../analysis_20201212/GSEA_mit/output_GSEA_hallmark.filtered_genes/gsea_report_for_DA_1607927536522.tsv",header = T, sep = "\t") %>% 
+                     filter(FDR.q.val < 0.01)
+gsea_dn_hm_gene <- read.table("../analysis_20201212/GSEA_mit/output_GSEA_hallmark.filtered_genes/gsea_report_for_PBS_1607927536522.tsv",header = T, sep = "\t") %>% 
+                     filter(FDR.q.val < 0.01)
+gsea_hm_gene <- rbind(gsea_up_hm_gene[,c("NAME","NES")],gsea_dn_hm_gene[nrow(gsea_dn_hm_gene):1,c("NAME","NES")])
+gsea_hm_gene
+```
+
+#### top enrichment        
+
+```{r gsea_hm_gene, echo=FALSE, fig.height=5.5, fig.width=10}
+par(mar=c(4,18,2,2))
+barplot(t(data.frame(row.names=gsub('HALLMARK_','', gsea_hm_gene$NAME),NES=gsea_hm_gene$NES)),
+        las=1,horiz=TRUE, xlab = "NES", main="DA vs PBS, 9871 filtered genes, GSEA hallmark\n(FDR.q.val < 0.01)",
+        xlim = c(-4,3.5))
+```
+
+```{r eval=FALSE, include=FALSE}
+pdf(file = "./figures/pathway/barplot.GSEA_hallmark.top_enrich_NES.pdf",
+    height = 5.5, width = 10)
+par(mar=c(4,18,2,2))
+barplot(t(data.frame(row.names=gsub('HALLMARK_','', gsea_hm_gene$NAME),NES=gsea_hm_gene$NES)),
+        las=1,horiz=TRUE, xlab = "NES", main="DA vs PBS, 9871 filtered genes, GSEA hallmark\n(FDR.q.val < 0.01)",
+        xlim = c(-4,3.5))
+dev.off()
+```
+
+
+#### OXIDATIVE_PHOS...          
+
+```{r include=FALSE}
+#source("../../20210315_SS2_LY/analysis_0318/ReplotGSEA.R")
+#source("./../final_0721/ReplotGSEA.R")
+source("./ReplotGSEA.mod.R")
+```
+
+```{r echo=FALSE, fig.height=3.6, fig.width=3.6}
+replotGSEA("../analysis_20201212/GSEA_mit/output_GSEA_hallmark.filtered_genes","HALLMARK_OXIDATIVE_PHOSPHORYLATION")
+```
+
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE, paged.print=TRUE}
+pdf(file = "./figures/pathway/enrichment.GSEA_hallmark.OXI.png",
+    height = 4.5, width = 4.5)
+replotGSEA("../analysis_20201212/GSEA_mit/output_GSEA_hallmark.filtered_genes","HALLMARK_OXIDATIVE_PHOSPHORYLATION")
+dev.off()
+```
+
+```{r eval=FALSE, include=FALSE}
+write.table(rec_gcol(data.frame(DEG_deseq2[,-1])), paste0("DESeq2_DEGs.",
+           #paste(colnames(mat_pc)[Aidx],collapse="."),"_vs_", paste(colnames(mat_pc)[Bidx],collapse="."),".csv"),
+           paste0(Aname,"_vs_",Bname,".csv")),
+           col.names = TRUE, row.names = FALSE,quote=FALSE, sep=",")
+```
+
+
+```{r eval=FALSE, include=FALSE}
+length(c(rets$up,rets$down))
+```
+
+
+```{r eval=FALSE, include=FALSE}
+# for KEGG
+write.table(cbind(rets$up,0,0,2),"KEGG_DESeq2/DEG_DA_vs_PBS.up",col.names = F, row.names = F, sep = "\t", quote = F)
+write.table(cbind(rets$down,0,0,2),"KEGG_DESeq2/DEG_DA_vs_PBS.dn",col.names = F, row.names = F, sep = "\t", quote = F)
+
+```
+
+
+
+
+
+

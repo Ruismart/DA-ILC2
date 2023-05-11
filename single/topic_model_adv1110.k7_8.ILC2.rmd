@@ -1,0 +1,40 @@
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(Seurat)
+source("../analysis_1101/topicmodel.r")
+```
+
+
+
+```{r}
+GEX.seur <- readRDS("adv_1110.GEX.seur_ILC2.afterTSNE.rds")
+GEX.seur
+```
+```{r}
+# to exclude ribosomal
+ribo.loc <- grepl("Rpl|Rps", rownames(GEX.seur@assays[['RNA']]@counts))
+head(rownames(GEX.seur@assays[['RNA']]@counts)[ribo.loc])
+sum(ribo.loc)
+```
+
+```{r}
+# Build topic models and generate assocaited figures 
+# Recommended to build models for k = 3,4,5,6,7,8,9,10 and tolerance 0.1 (set as inputs to this function)
+
+# so slow, would run into three sub-scripts from 3 to 10
+# sub-script_1
+for(kk in c(7,8)){
+  kkk <- kk
+  if(kk %in% c(3:9)){
+    kkk <- paste0(0,kk)
+  }
+  FitGoM(t(as.matrix(GEX.seur@assays[['RNA']]@counts)[!ribo.loc,]),
+         K = kk, tol = 0.1,
+         path_rda =paste0("topicmodel/test_topic.n",kkk,"_t0.1.rda"))
+}
+```
+
+
+
+
+

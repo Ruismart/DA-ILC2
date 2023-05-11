@@ -1,0 +1,1438 @@
+---
+output: 
+  html_document: 
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+---
+
+
+# 20211009_10x_LY sc10x                
+             
+GEX + FB                       
+FB 23G + 10G, asked (51.5G, real)         
+GEX 90G  + 110G, asked (243.2G, real)                  
+          
+           
+single cell, lung ILC2                
+           
+cells :              
+loading 54,000 cells             
+expect-cell try 30,000 cells              
+cellranger estimated 26,102 cells            
+              
+hashtags x8,        
+TotalSeqB b0301-0308               
+1/2: 'PBS' each 6,000 cells           
+3/4/5:  'IL-33' 12,000/6,000/6,000 cells          
+6/7/8:  'IL-33 + DA' each 6,000 cells           
+            
+```{r message=FALSE, warning=FALSE}
+source("../../../analysis.10x.r")
+```            
+
+
+## load 10x data      
+
+```{r echo=FALSE}
+filt.10x <- Read10X(data.dir = "../filtered_feature_bc_matrix/")
+```
+
+```{r}
+GEX <- filt.10x$`Gene Expression`
+FB <- filt.10x$`Antibody Capture`
+```
+
+
+### check datasets   
+```{r}
+dim(GEX)
+GEX[1:6,1:6]
+```
+
+```{r}
+dim(FB)
+FB[,1:6]
+```
+
+```{r}
+rowSums(FB)
+```
+
+```{r}
+rowMeans(FB)
+```
+
+```{r}
+apply(FB,1,max)
+apply(FB,1,median)
+```
+
+## FB 
+
+```{r}
+# shorten rownames    
+rownames(FB) <- paste0("hashtag",1:8)
+
+# build seurat object
+FB.seur <- CreateSeuratObject(counts = FB,project = "ILC2_FB")
+
+FB.seur
+```
+
+### normalization     
+    
+perform Seurat 'Demultiplexing with hashtag oligos(HTOs)     
+ref https://satijalab.org/seurat/articles/hashing_vignette.html       
+    
+```{r}
+# normalize
+FB.seur <- NormalizeData(FB.seur)
+FB.seur <- FindVariableFeatures(FB.seur, selection.method = "mean.var.plot")
+FB.seur <- ScaleData(FB.seur, features = VariableFeatures(FB.seur))
+
+# independent assay for HTO data  
+FB.seur[['HTO']] <- CreateAssayObject(counts = FB)
+FB.seur <- NormalizeData(FB.seur, assay = 'HTO', normalization.method = 'CLR')
+```
+
+### demultiplexing        
+    
+```{r}
+# Demultiplex cells based on HTO enrichment
+FB.seur <- HTODemux(FB.seur, assay = 'HTO', positive.quantile = 0.99)
+
+table(FB.seur$HTO_classification.global)
+```
+
+```{r fig.width=4,fig.height=4}
+sl_stat <- table(FB.seur$HTO_classification.global)
+barplot(sl_stat,ylim = c(0,25000),col = c("#FF6C91","lightgrey","#7CAE00"),main = "Feature Barcode statistics")
+text(x=1:3*1.2-0.5,y=sl_stat+1550,paste0(sl_stat,"\n",100*round(as.numeric(sl_stat/sum(sl_stat)),4),"%"),cex = 0.75)
+``` 
+
+### RidgePlot    
+#### with ridge plots, raw    
+```{r ridge1,fig.width=10,fig.height=8,message=FALSE, warning=FALSE}
+FB.seur@active.ident <- factor(FB.seur$HTO_maxID,levels=paste0("hashtag",1:8))
+
+RidgePlot(FB.seur, assay = 'HTO', features = rownames(FB.seur[['HTO']])[1:8],same.y.lims= TRUE, ncol=3,
+          cols = c("#05BE78","#5ECDF2","#739BDD","#B7E16F","#87C0C9","#7756FA","#9855B9","#6F9920")) 
+```
+
+#### with ridge plots, filtered    
+
+```{r ridge2,fig.width=10,fig.height=9,message=FALSE, warning=FALSE}
+FB.seur@meta.data$hash.ID.sort <- factor(as.character(FB.seur@meta.data$hash.ID),levels = c("Doublet","Negative",paste0("hashtag",1:8)))
+RidgePlot(FB.seur, assay = 'HTO', features = rownames(FB.seur[['HTO']])[1:8], ncol=3,same.y.lims= TRUE,
+          cols = c("#FF6C91","lightgrey","#05BE78","#5ECDF2","#739BDD","#B7E16F","#87C0C9","#7756FA","#9855B9","#6F9920"),group.by = "hash.ID.sort") 
+```
+
+
+### tSNE for HTOs     
+     
+```{r message=FALSE, warning=FALSE,FB.demul_vs,fig.width=6,fig.height=8}
+# first, remove negative cells from th object
+#FB.seur.subset <- FB.seur
+
+# Calculate a tSNE embedding of the HTO data
+#DefaultAssay(FB.seur.subset) <- "HTO"
+
+#FB.seur.subset <- ScaleData(FB.seur.subset, features = rownames(FB.seur.subset), verbose = FALSE)
+#FB.seur.subset <- RunPCA(FB.seur.subset, features = rownames(FB.seur.subset), approx = FALSE)
+#FB.seur.subset <- RunTSNE(FB.seur.subset, dims = 1:8, perplexity = 500, check_duplicates = FALSE)
+
+#saveRDS(FB.seur.subset, "FB.seur.subset.rds")
+FB.seur.subset <- readRDS("FB.seur.subset.rds")
+
+multiplot(
+DimPlot(FB.seur.subset, order = paste0("hashtag",8:1),
+        cols = c("#05BE78","#5ECDF2","#739BDD","#B7E16F","#87C0C9","#7756FA","#9855B9","#6F9920")) + labs(title = "FB Max_ID"), 
+DimPlot(FB.seur.subset, order = c("Doublet",paste0("hashtag",8:1)), group.by = 'hash.ID.sort', label = F,
+        cols = c("lightgrey","#05BE78","#5ECDF2","#739BDD","#B7E16F","#87C0C9","#7756FA","#9855B9","#6F9920","#FF6C91")) + 
+  labs(title = "FB Filtered_ID") + theme(plot.title = element_text(hjust = 0)) ,
+cols = 1)
+```
+
+```{r fig.width=7.6,fig.height=5.6}
+HTOHeatmap(FB.seur, assay = "HTO") + labs(title = "FB Filtering")
+```
+
+
+### stat    
+
+```{r include=FALSE}
+Idents(FB.seur) <- "HTO_classification.global"
+FB.seur$HTO_classification.global <- factor(as.character(FB.seur$HTO_classification.global),levels = c("Doublet","Negative","Singlet"))
+VlnPlot(FB.seur, features = "nCount_RNA", pt.size = 0.1, log = TRUE, cols = c("#7CAE00","lightgrey","#FF6C91"))
+```
+
+```{r}
+Idents(FB.seur) <- "HTO_classification.global"
+FB.seur$HTO_classification.global <- factor(as.character(FB.seur$HTO_classification.global),levels = c("Doublet","Negative","Singlet"))
+VlnPlot(FB.seur, features = "nCount_RNA", pt.size = 0.1, log = TRUE, cols = c("#FF6C91","lightgrey","#7CAE00"))
+```
+
+```{r}
+table(FB.seur@meta.data$hash.ID.sort)
+```
+
+```{r fig.width=7,fig.height=4}
+sl_stat <- table(FB.seur$hash.ID.sort)
+barplot(sl_stat,ylim = c(0,7200),col = c("#FF6C91","lightgrey","#05BE78","#5ECDF2","#739BDD","#B7E16F","#87C0C9","#7756FA","#9855B9","#6F9920"),
+        main = "Feature Barcode statistics",cex.names = 0.75)
+text(x=1:10*1.2-0.45,y=sl_stat+385,paste0(sl_stat,"\n",100*round(as.numeric(sl_stat/sum(sl_stat)),4),"%"),cex = 0.75)
+```
+
+
+## GEX    
+    
+mainly follow https://satijalab.org/seurat/articles/pbmc3k_tutorial.html    
+
+### filtering      
+
+```{r message=FALSE, warning=FALSE}
+GEX.seur <- CreateSeuratObject(counts = GEX,
+                               min.cells = 3,
+                               min.features = 200,
+                               project = "ILC2_GEX")
+GEX.seur
+```
+
+
+#### MT genes   
+```{r}
+grep("^mt-",rownames(GEX),value = T)
+```
+
+```{r}
+MT_gene <- grep("^mt-",rownames(GEX),value = T)
+MT_filt <- MT_gene %in% rownames(GEX.seur@assays[['RNA']]@counts)
+GEX.seur[["percent.mt"]] <- PercentageFeatureSet(GEX.seur, features = MT_gene[MT_filt])
+
+# Visualize QC metrics as a violin plot
+VlnPlot(GEX.seur, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0.1)
+```
+
+```{r featurescatter,fig.width=10,fig.height=4}
+plota <- FeatureScatter(GEX.seur, feature1 = "nCount_RNA", feature2 = "percent.mt") 
+plotb <- FeatureScatter(GEX.seur, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") 
+plota + plotb
+```
+
+
+#### add FB info      
+
+```{r}
+GEX.seur$FB.info <- FB.seur@meta.data[rownames(GEX.seur@meta.data),"hash.ID.sort"]
+#head(GEX.seur@meta.data)
+```
+
+```{r}
+table(GEX.seur$FB.info)
+```
+
+#### subset singlets      
+
+```{r}
+GEX.seur.filt <- subset(GEX.seur, subset = FB.info!="Doublet" & FB.info!="Negative")
+GEX.seur.filt
+```
+
+
+```{r}
+VlnPlot(GEX.seur.filt, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0.1)
+```
+
+```{r fig.width=10,fig.height=4}
+plota <- FeatureScatter(GEX.seur.filt, feature1 = "nCount_RNA", feature2 = "percent.mt") 
+plotb <- FeatureScatter(GEX.seur.filt, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") 
+plota + plotb
+```
+
+
+#### filtering        
+##### keep the the seurat obj name        
+```{r}
+GEX.seur.raw <- GEX.seur
+GEX.seur <- GEX.seur.filt
+rm(GEX.seur.filt)
+```
+
+using percent.mt = 10 as cutoff                           
+
+```{r}
+GEX.seur <- subset(GEX.seur, subset = percent.mt < 10 & nFeature_RNA > 500 & nFeature_RNA < 5500 & nCount_RNA < 40000)
+GEX.seur <- subset(GEX.seur, features = rownames(GEX.seur)[rowSums(GEX.seur@assays[['RNA']]@counts > 0)>=3])
+GEX.seur
+```
+
+
+filtered obj        
+```{r}
+VlnPlot(GEX.seur, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0.1)
+```
+
+```{r fig.width=10,fig.height=4}
+plota <- FeatureScatter(GEX.seur, feature1 = "nCount_RNA", feature2 = "percent.mt") + 
+             coord_cartesian(xlim =c(0, 42000), ylim = c(0, 20))
+plotb <- FeatureScatter(GEX.seur, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") + 
+             coord_cartesian(xlim =c(0, 42000), ylim = c(0, 6000))
+plota + plotb
+```
+
+```{r}
+median(GEX.seur$nFeature_RNA)
+quantile(GEX.seur$nFeature_RNA,probs = seq(0,1,0.05))
+```
+
+```{r}
+median(GEX.seur$nCount_RNA)
+quantile(GEX.seur$nCount_RNA,probs = seq(0,1,0.05))
+```
+
+
+```{r fig.width=7,fig.height=4}
+sl_stat <- table(GEX.seur$FB.info)
+barplot(sl_stat,ylim = c(0,7200),col = c("#FF6C91","lightgrey","#05BE78","#5ECDF2","#739BDD","#B7E16F","#87C0C9","#7756FA","#9855B9","#6F9920"),
+        main = "Feature Barcode statistics",cex.names = 0.75)
+text(x=1:10*1.2-0.45,y=sl_stat+385,paste0(sl_stat,"\n",100*round(as.numeric(sl_stat/sum(sl_stat)),4),"%"),cex = 0.75)
+```
+
+#### qc for each FB               
+
+```{r fig.width=10,fig.height=4}
+plotabi <- list()
+for(i in 1:8){
+  plotai <- FeatureScatter(subset(GEX.seur, subset=FB.info==paste0("hashtag",i)),
+                           feature1 = "nCount_RNA", feature2 = "percent.mt",
+                           group.by = "orig.ident") + 
+             coord_cartesian(xlim =c(0, 42000), ylim = c(0, 20))
+  plotbi <- FeatureScatter(subset(GEX.seur, subset=FB.info==paste0("hashtag",i)), 
+                           feature1 = "nCount_RNA", feature2 = "nFeature_RNA",
+                           group.by = "orig.ident") + 
+             coord_cartesian(xlim =c(0, 42000), ylim = c(0, 6000))
+  plotabi[[i]] <- plotai + labs(title=paste0("hashtag",i)) + plotbi
+}
+plotabi
+```
+
+
+```{r  fig.width=15,fig.height=6}
+cowplot::plot_grid(plotlist = plotabi, ncol = 2)
+```
+
+
+
+#### check cellcycle     
+```{r}
+s.genes <- Hmisc::capitalize(tolower(cc.genes.updated.2019$s.genes))
+g2m.genes <- Hmisc::capitalize(tolower(cc.genes.updated.2019$g2m.genes))
+
+GEX.seur <- CellCycleScoring(GEX.seur,
+                             s.features = s.genes,
+                             g2m.features = g2m.genes)
+```
+
+```{r}
+VlnPlot(GEX.seur, features = c("S.Score", "G2M.Score"), group.by = "FB.info", 
+    ncol = 4, pt.size = 0.1)
+```
+
+
+```{r message=FALSE, warning=FALSE}
+GEX.seur.cc <- GEX.seur
+
+GEX.seur.cc <- NormalizeData(GEX.seur.cc)
+GEX.seur.cc <- FindVariableFeatures(GEX.seur.cc)
+GEX.seur.cc <- ScaleData(GEX.seur.cc)
+Idents(GEX.seur.cc) <- "Phase"
+RidgePlot(GEX.seur.cc, features = c("Pcna", "Top2a", "Mcm6", "Mki67"), ncol = 2)
+```
+
+##### seems would have distinct CC-related groups !         
+
+```{r message=FALSE, warning=FALSE}
+GEX.seur.cc <- RunPCA(GEX.seur.cc, features = c(s.genes, g2m.genes))
+DimPlot(GEX.seur.cc, reduction = 'pca')
+```
+
+          
+### Markers and Clusters            
+           
+#### Normalizing           
+             
+```{r}
+GEX.seur <- NormalizeData(GEX.seur, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+
+```{r message=FALSE, warning=FALSE,varselection,fig.width=15,fig.height=6}
+GEX.seur <- FindVariableFeatures(GEX.seur, selection.method = "vst", nfeatures = 1500)
+
+# Identify the 10 most highly variable genes
+top20 <- head(VariableFeatures(GEX.seur), 20)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(GEX.seur)
+plot2 <- LabelPoints(plot = plot1, points = top20, repel = TRUE)
+plot1 + plot2
+```
+
+##### learning from these top variable markers, could say that there're a few other distinct non-ILC2 clusters           
+                
+```{r}
+top20
+```
+         
+```{r}
+GEX.seur <- ScaleData(GEX.seur, features = rownames(GEX.seur))
+```
+
+#### PCA       
+
+```{r}
+# exclude MT genes  
+GEX.seur <- RunPCA(GEX.seur, features = setdiff(VariableFeatures(object = GEX.seur),MT_gene))
+```
+
+```{r pca,fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur, reduction = "pca",dims = 1:2) +
+  DimPlot(GEX.seur, reduction = "pca",dims = 3:4)
+```
+
+```{r pcsheat,fig.width=12,fig.height=18}
+DimHeatmap(GEX.seur, dims = 1:24, cells = 1500, balanced = TRUE,ncol = 4)
+```
+
+
+##### decide PCs to use          
+     
+```{r}
+ElbowPlot(GEX.seur,ndims = 24)
+```
+
+
+would take PCs 1-18 for next                   
+
+```{r}
+PCs <- 1:18
+```
+
+```{r}
+GEX.seur <- FindNeighbors(GEX.seur, dims = PCs)
+GEX.seur <- FindClusters(GEX.seur, resolution = 0.6, method = "igraph")
+```
+
+#### Run UMAP/tSNE    
+
+```{r}
+GEX.seur <- RunTSNE(GEX.seur, dims=PCs)
+GEX.seur <- RunUMAP(GEX.seur, dims=PCs)
+```
+
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur, reduction = "tsne", label = T) + DimPlot(GEX.seur, reduction = "umap", label = T)
+```
+
+
+
+#### check some markers       
+
+```{r fig.width=5.5, fig.height=5.6}
+# Thy1: CD90
+# Il7r: IL-7Ra
+genes_to_check <- c("Fcer1g","Klrb1c","Ncr1","Il22",
+                    "Ccr6","Tbx21","Ifng","Eomes",
+                    "Gata3","Il1rl1","Il13","Il17a",
+                    "Il4","Il5","Klrg1","Rorc",
+                    "Il7r","Thy1","Kdm6b","Ptprc",
+                    "Cd3d","Cd3g","Cd4","Cd8a",
+                    "Trac","Trdc","Epcam","Pecam1","Siglech",
+                    "Hist1h1b","Top2a","Mcm6","Mki67")
+
+DotPlot(GEX.seur, features = genes_to_check[genes_to_check %in% rownames(GEX.seur)],
+             assay='RNA' , group.by = "seurat_clusters" )  + coord_flip()
+```
+
+
+
+```{r fig.height=20, fig.width=12}
+FeaturePlot(GEX.seur, features = genes_to_check, ncol = 4)
+```
+
+```{r fig.height=20, fig.width=12}
+VlnPlot(GEX.seur, features = genes_to_check, ncol = 4, group.by = "seurat_clusters")
+```
+
+##### here we mainly have clusters of NK/ILC1/ILC2 cells            
+
+
+```{r fig.width=5.5, fig.height=3.6}
+# 
+genes_nature2017 <- c("Tbx21","Ifng","Ccl5","Il12rb1",
+                      "Gata3","Il1rl1","Il5","Il13",
+                      "Rorc","Il17a","Ahr","Il23r")
+
+DotPlot(GEX.seur, features = genes_nature2017[genes_nature2017 %in% rownames(GEX.seur)],
+             assay='RNA' , group.by = "seurat_clusters" )  + coord_flip()
+```
+
+```{r fig.height=7.5, fig.width=12}
+FeaturePlot(GEX.seur, features = genes_nature2017, ncol = 4)
+```
+
+```{r fig.height=7.5, fig.width=12}
+VlnPlot(GEX.seur, features = genes_nature2017, ncol = 4, group.by = "seurat_clusters")
+```
+
+
+
+#### DoubletFinder       
+
+```{r message=FALSE, warning=FALSE}
+#library(DoubletFinder)
+```
+
+```{r include=FALSE}
+# to find a better pk
+#sweep.res.list <- paramSweep_v3(GEX.seur, PCs = PCs, sct = FALSE) 
+```
+
+```{r}
+#for(i in 1:length(sweep.res.list)){
+#  if(length(sweep.res.list[[i]]$pANN[is.nan(sweep.res.list[[i]]$pANN)]) !=0){
+#    if(i!=1){
+#      sweep.res.list[[i]] <- sweep.res.list[[i-1]]
+#    }else(
+#      sweep.res.list[[i]] <- sweep.res.list[[i+1]]
+#    )
+#  }
+#}
+#sweep.stats <- summarizeSweep(sweep.res.list, GT=FALSE)
+#bcmvn <- find.pK(sweep.stats)
+```
+
+```{r}
+#pk_v <- as.numeric(as.character(bcmvn$pK))
+#pk_good <- pk_v[bcmvn$BCmetric==max(bcmvn$BCmetric)]
+```
+
+```{r}
+# specify expected doublet number     
+#nExp_poi <- round(0.05*length(colnames(GEX.seur)))
+
+#GEX.seur <- doubletFinder_v3(GEX.seur, PCs = PCs, pN = 0.25, pK = pk_good, 
+#                             nExp = nExp_poi, reuse.pANN = FALSE, sct = FALSE)
+#colnames(GEX.seur@meta.data)[ncol(GEX.seur@meta.data)] <- "DoubletFinder0.05"
+```
+
+```{r message=FALSE, warning=FALSE}
+# specify expected doublet number     
+#nExp_poi <- round(0.1*length(colnames(GEX.seur)))
+#
+#GEX.seur <- doubletFinder_v3(GEX.seur, PCs = PCs, pN = 0.25, pK = pk_good, 
+#                             nExp = nExp_poi, reuse.pANN = FALSE, sct = FALSE)
+#colnames(GEX.seur@meta.data)[ncol(GEX.seur@meta.data)] <- "DoubletFinder0.1"
+```
+
+```{r}
+#saveRDS(GEX.seur, "GEX.seur.afterDFinder.rds")
+GEX.seur <- readRDS("GEX.seur.afterDFinder.rds")
+```
+
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur, reduction = "umap", group.by = "DoubletFinder0.05") +
+  DimPlot(GEX.seur, reduction = "umap", label = T)
+```
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur, reduction = "umap", group.by = "DoubletFinder0.1") +
+  DimPlot(GEX.seur, reduction = "umap", label = T)
+```
+
+```{r fig.width=12,fig.height=4.5}
+FeaturePlot(GEX.seur, reduction = "umap", features = c("nFeature_RNA","nCount_RNA"))
+```
+
+
+ 
+#### pre-Annotation    
+
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+#GEX.markers.pre1 <- FindAllMarkers(GEX.seur, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25,
+#                                  test.use = "MAST")
+GEX.markers.pre1 <- read.table("GEX.markers.pre1.1105.csv", header = TRUE, sep = ",")
+GEX.markers.pre1 %>% group_by(cluster) %>% top_n(n = 8, wt = avg_log2FC)
+```
+
+```{r eval=FALSE, include=FALSE}
+write.table(GEX.markers.pre1, 
+            "GEX.markers.pre1.1105.csv", 
+            col.names = TRUE,
+            row.names = FALSE,
+            quote = F,
+            sep = ",")
+```
+
+
+```{r fig.width=12,fig.height=37.5}
+FeaturePlot(GEX.seur, features = (GEX.markers.pre1 %>% group_by(cluster) %>% top_n(n = 8, wt = avg_log2FC))$gene[1:60],
+            reduction = 'umap')
+```
+
+```{r fig.width=12,fig.height=37.5}
+FeaturePlot(GEX.seur, features = (GEX.markers.pre1 %>% group_by(cluster) %>% top_n(n = 8, wt = avg_log2FC))$gene[61:120],
+            reduction = 'umap')
+```
+
+```{r fig.width=12,fig.height=37.5}
+VlnPlot(GEX.seur, features = (GEX.markers.pre1 %>% group_by(cluster) %>% top_n(n = 8, wt = avg_log2FC))$gene[1:60])
+```
+
+```{r fig.width=12,fig.height=37.5}
+VlnPlot(GEX.seur, features = (GEX.markers.pre1 %>% group_by(cluster) %>% top_n(n = 8, wt = avg_log2FC))$gene[61:120])
+```
+
+```{r fig.width=12, fig.height=12}
+DoHeatmap(GEX.seur, features = (GEX.markers.pre1 %>% group_by(cluster) %>% top_n(n = 8, wt = avg_log2FC))$gene) +
+  NoLegend()
+```
+
+          
+##### now initially we have              
+                   
+NK:  cluster 0, 2, 7(cellcycle)             
+ILC1:  cluster 6               
+ILC2:  cluster 1, 3, 4, 5, 8(cellcycle)               
+ILC3:  cluster 11             
+Mixed:  cluster 9(expressed both NK and ILC2 markers)               
+Tcell:  cluster 10, 12 (NKT)                         
+DC:  cluster 14              
+Stromal:  cluster 13                    
+            
+##### next to subset ILC2s, would directly extract cluster 1,3,4,5 and 7,8,9                      
+            
+            
+```{r}
+GEX.seur$preAnno_1 <- as.character(GEX.seur$seurat_clusters)
+GEX.seur$preAnno_1[GEX.seur$preAnno_1 %in% c(0,2,7)] <- "NK"
+GEX.seur$preAnno_1[GEX.seur$preAnno_1 %in% c(6)] <- "ILC1"
+GEX.seur$preAnno_1[GEX.seur$preAnno_1 %in% c(1,3,4,5,8)] <- "ILC2"
+GEX.seur$preAnno_1[GEX.seur$preAnno_1 %in% c(11)] <- "ILC3"
+GEX.seur$preAnno_1[GEX.seur$preAnno_1 %in% c(9)] <- "Mixed"
+GEX.seur$preAnno_1[GEX.seur$preAnno_1 %in% c(10,12)] <- "Tcell"
+GEX.seur$preAnno_1[GEX.seur$preAnno_1 %in% c(14)] <- "DC"
+GEX.seur$preAnno_1[GEX.seur$preAnno_1 %in% c(13)] <- "Stromal"
+
+GEX.seur$preAnno_1 <- factor(GEX.seur$preAnno_1, levels = c("NK","ILC1","ILC2","ILC3",
+                                                            "Mixed","Tcell","DC","Stromal"))
+
+```
+
+```{r}
+GEX.seur$preAnno_2 <- as.character(GEX.seur$seurat_clusters)
+GEX.seur$preAnno_2[GEX.seur$preAnno_2 %in% c(0)] <- "NK_1"
+GEX.seur$preAnno_2[GEX.seur$preAnno_2 %in% c(2)] <- "NK_2"
+GEX.seur$preAnno_2[GEX.seur$preAnno_2 %in% c(7)] <- "NK_3"
+GEX.seur$preAnno_2[GEX.seur$preAnno_2 %in% c(6)] <- "ILC1"
+GEX.seur$preAnno_2[GEX.seur$preAnno_2 %in% c(1)] <- "ILC2_1"
+GEX.seur$preAnno_2[GEX.seur$preAnno_2 %in% c(3)] <- "ILC2_2"
+GEX.seur$preAnno_2[GEX.seur$preAnno_2 %in% c(4)] <- "ILC2_3"
+GEX.seur$preAnno_2[GEX.seur$preAnno_2 %in% c(5)] <- "ILC2_4"
+GEX.seur$preAnno_2[GEX.seur$preAnno_2 %in% c(8)] <- "ILC2_5"
+GEX.seur$preAnno_2[GEX.seur$preAnno_2 %in% c(11)] <- "ILC3"
+GEX.seur$preAnno_2[GEX.seur$preAnno_2 %in% c(9)] <- "Mixed"
+GEX.seur$preAnno_2[GEX.seur$preAnno_2 %in% c(10)] <- "Tcell_1"
+GEX.seur$preAnno_2[GEX.seur$preAnno_2 %in% c(12)] <- "Tcell_2"
+GEX.seur$preAnno_2[GEX.seur$preAnno_2 %in% c(14)] <- "DC"
+GEX.seur$preAnno_2[GEX.seur$preAnno_2 %in% c(13)] <- "Stromal"
+
+GEX.seur$preAnno_2 <- factor(GEX.seur$preAnno_2, levels = c("NK_1","NK_2","NK_3",
+                                                            "ILC1",
+                                                            "ILC2_1","ILC2_2","ILC2_3","ILC2_4","ILC2_5",
+                                                            "ILC3",
+                                                            "Mixed",
+                                                            "Tcell_1","Tcell_2",
+                                                            "DC","Stromal"))
+
+```
+
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur, reduction = "umap", group.by = "preAnno_1",label = F, repel = F, label.size = 3.5) +
+  DimPlot(GEX.seur, reduction = "umap", label = T)
+```
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur, reduction = "umap", group.by = "preAnno_2",label = F, repel = F, label.size = 3.2) +
+  DimPlot(GEX.seur, reduction = "umap", label = T)
+```
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur, reduction = "umap", group.by = "preAnno_1",label = F, repel = F, label.size = 3.5) +
+  DimPlot(GEX.seur, reduction = "umap", group.by = "preAnno_2",label = F, repel = F, label.size = 3.2)
+```
+
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur, reduction = "umap", group.by = "preAnno_1",label = F, repel = F, label.size = 3.5) +
+  FeaturePlot(GEX.seur, reduction = "umap", features = c("Rora","Rasa3","Bmp2","Nr1d2"),ncol = 2)
+```
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur, reduction = "umap", group.by = "preAnno_1",label = F, repel = F, label.size = 3.5) +
+  FeaturePlot(GEX.seur, reduction = "umap", features = c("Tnfaip3","Il7r","Il21r","Dock2"),ncol = 2)
+```
+
+```{r}
+GEX.seur <- subset(GEX.seur, features = rownames(GEX.seur)[rowSums(GEX.seur@assays[['RNA']]@data > 0)>=3])
+GEX.seur
+```
+
+#### preAnno_1      
+
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+# find markers for every preAnno group
+#Idents(GEX.seur) <- "preAnno_1"
+#GEX.markers.preA_1 <- FindAllMarkers(GEX.seur, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25,
+#                                  test.use = "MAST")
+GEX.markers.preA_1 <- read.table("sc10x_plus_GEX.markers.preA_1.1105.csv", header = TRUE, sep = ",")
+GEX.markers.preA_1 %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+write.table(GEX.markers.preA_1, 
+            "sc10x_plus_GEX.markers.preA_1.1105.csv", 
+            col.names = TRUE,
+            row.names = FALSE,
+            quote = F,
+            sep = ",")
+```
+
+```{r fig.width=12,fig.height=50}
+FeaturePlot(GEX.seur, features = (GEX.markers.preA_1 %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC))$gene[1:80],
+            reduction = 'umap')
+```
+
+```{r fig.width=12,fig.height=50}
+FeaturePlot(GEX.seur, features = (GEX.markers.preA_1 %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC))$gene[81:160],
+            reduction = 'umap')
+```
+
+```{r fig.width=12,fig.height=50}
+VlnPlot(GEX.seur, features = (GEX.markers.preA_1 %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC))$gene[1:80])
+```
+
+```{r fig.width=12,fig.height=50}
+VlnPlot(GEX.seur, features = (GEX.markers.preA_1 %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC))$gene[81:160])
+```
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur, reduction = "umap", group.by = "preAnno_1",label = F, repel = F, label.size = 3.5) +
+  DimPlot(GEX.seur, reduction = "umap", group.by = "preAnno_2",label = F, repel = F, label.size = 3.2)
+```
+
+```{r fig.width=18, fig.height=15}
+DoHeatmap(GEX.seur , group.by = "preAnno_1", 
+          features = (GEX.markers.preA_1 %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC))$gene) +
+  NoLegend()
+```
+
+
+#### preAnno_2      
+
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+# find markers for every preAnno group
+#Idents(GEX.seur) <- "preAnno_2"
+#GEX.markers.preA_2 <- FindAllMarkers(GEX.seur, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25,
+#                                  test.use = "MAST")
+#Idents(GEX.seur) <- "preAnno_1"
+GEX.markers.preA_2 <- read.table("sc10x_plus_GEX.markers.preA_2.1105.csv", header = TRUE, sep = ",")
+GEX.markers.preA_2 %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+write.table(GEX.markers.preA_2, 
+            "sc10x_plus_GEX.markers.preA_2.1105.csv", 
+            col.names = TRUE,
+            row.names = FALSE,
+            quote = F,
+            sep = ",")
+```
+
+```{r fig.width=12,fig.height=37.5}
+FeaturePlot(GEX.seur, features = (GEX.markers.preA_2 %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC))$gene[1:60],
+            reduction = 'umap')
+```
+
+```{r fig.width=12,fig.height=37.5}
+FeaturePlot(GEX.seur, features = (GEX.markers.preA_2 %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC))$gene[61:120],
+              reduction = 'umap')
+```
+
+```{r fig.width=12,fig.height=37.5}
+FeaturePlot(GEX.seur, features = (GEX.markers.preA_2 %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC))$gene[121:180],
+             reduction = 'umap')
+```
+
+```{r fig.width=12,fig.height=37.5}
+FeaturePlot(GEX.seur, features = (GEX.markers.preA_2 %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC))$gene[181:240],
+             reduction = 'umap')
+```
+
+```{r fig.width=12,fig.height=37.5}
+FeaturePlot(GEX.seur, features = (GEX.markers.preA_2 %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC))$gene[241:300],
+             reduction = 'umap')
+```
+
+```{r fig.width=12,fig.height=37.5}
+VlnPlot(GEX.seur,  group.by = "preAnno_2", 
+        features = (GEX.markers.preA_2 %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC))$gene[1:60])
+```
+
+```{r fig.width=12,fig.height=37.5}
+VlnPlot(GEX.seur,  group.by = "preAnno_2", 
+        features = (GEX.markers.preA_2 %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC))$gene[61:120])
+```
+
+```{r fig.width=12,fig.height=37.5}
+VlnPlot(GEX.seur,  group.by = "preAnno_2", 
+        features = (GEX.markers.preA_2 %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC))$gene[121:180])
+```
+
+```{r fig.width=12,fig.height=37.5}
+VlnPlot(GEX.seur,  group.by = "preAnno_2", 
+        features = (GEX.markers.preA_2 %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC))$gene[181:240])
+```
+
+```{r fig.width=12,fig.height=37.5}
+VlnPlot(GEX.seur,  group.by = "preAnno_2", 
+        features = (GEX.markers.preA_2 %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC))$gene[241:300])
+```
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur, reduction = "umap", group.by = "preAnno_1",label = T, repel = F, label.size = 3.5) +
+  DimPlot(GEX.seur, reduction = "umap", group.by = "preAnno_2",label = T, repel = F, label.size = 3.2)
+```
+
+```{r fig.width=15, fig.height=27}
+DoHeatmap(GEX.seur , group.by = "preAnno_2", features = (GEX.markers.preA_2 %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC))$gene) +
+  NoLegend()
+```
+
+#### recheck markers            
+
+
+```{r fig.width=5.5, fig.height=7}
+DotPlot(GEX.seur, features = genes_to_check[genes_to_check %in% rownames(GEX.seur)],
+             assay='RNA' , group.by = "preAnno_1" )  + coord_flip() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.4))
+```
+
+
+```{r fig.width=5.5, fig.height=4.5}
+DotPlot(GEX.seur, features = genes_nature2017[genes_nature2017 %in% rownames(GEX.seur)],
+             assay='RNA' , group.by = "preAnno_1" )  + coord_flip() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.4))
+```
+
+
+```{r fig.width=7.5, fig.height=7}
+DotPlot(GEX.seur, features = genes_to_check[genes_to_check %in% rownames(GEX.seur)],
+             assay='RNA' , group.by = "preAnno_2" )  + coord_flip() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.4))
+```
+
+```{r fig.width=7.5, fig.height=4.5}
+DotPlot(GEX.seur, features = genes_nature2017[genes_nature2017 %in% rownames(GEX.seur)],
+             assay='RNA' , group.by = "preAnno_2" )  + coord_flip() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.4))
+```
+
+#### add sample info       
+
+```{r echo=FALSE}
+rowRatio <- function(df){
+  for(i in 1:dim(df)[1]){
+    df[i,] <- df[i,]/rowSums(df)[i]
+  }
+  return(df)
+}
+```
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur, reduction = "umap", label = F,group.by = "FB.info",
+        cols = c("#05BE78","#5ECDF2","#739BDD","#B7E16F","#87C0C9","#7756FA","#9855B9","#6F9920"))+
+  DimPlot(GEX.seur, reduction = "umap", label = T)
+```
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur, reduction = "umap", label = F,group.by = "FB.info",
+        cols = c("#05BE78","#5ECDF2","#739BDD","#B7E16F","#87C0C9","#7756FA","#9855B9","#6F9920"))+
+  DimPlot(GEX.seur, reduction = "umap", label = T, group.by = "preAnno_2")
+```
+
+```{r fig.width=12,fig.height=6}
+DimPlot(GEX.seur, group.by = "FB.info", split.by = "FB.info", ncol = 4,
+        cols = c("#05BE78","#5ECDF2","#739BDD","#B7E16F","#87C0C9","#7756FA","#9855B9","#6F9920"))
+```
+
+```{r}
+GEX.seur$FB.info <- as.factor(as.character(GEX.seur$FB.info))
+table(data.frame(GEX.seur$FB.info,GEX.seur$preAnno_2))
+```
+
+```{r fig.width=8, fig.height=4}
+pheatmap::pheatmap(table(data.frame(GEX.seur$FB.info,GEX.seur$preAnno_2)),
+                   main = "Cell Count",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.0f")
+```
+
+```{r fig.width=8, fig.height=4}
+pheatmap::pheatmap(100*rowRatio(table(data.frame(GEX.seur$FB.info,GEX.seur$preAnno_2))),
+                   main = "Percentage of Sample count(row)",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.2f")
+```
+
+
+```{r}
+table(data.frame(GEX.seur$FB.info,GEX.seur$preAnno_1))
+```
+
+```{r fig.width=6, fig.height=4}
+pheatmap::pheatmap(table(data.frame(GEX.seur$FB.info,GEX.seur$preAnno_1)),
+                   main = "Cell Count",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.0f")
+```
+
+```{r fig.width=6, fig.height=4}
+pheatmap::pheatmap(100*rowRatio(table(data.frame(GEX.seur$FB.info,GEX.seur$preAnno_1))),
+                   main = "Percentage of Sample count(row)",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.2f")
+```
+
+
+##### sample info              
+
+TotalSeqB b0301-0308               
+1/2: 'PBS' each 6,000 cells           
+3/4/5:  'IL-33' 12,000/6,000/6,000 cells          
+6/7/8:  'IL-33 + DA' each 6,000 cells         
+              
+notice that tag3 has double cell number sorted,           
+check if it produced distinct cluster          
+          
+```{r}
+GEX.seur$SP.info <- as.character(GEX.seur$FB.info)
+GEX.seur$SP.info[GEX.seur$SP.info %in% paste0("hashtag",c(1,2))] <- "PBS"
+GEX.seur$SP.info[GEX.seur$SP.info %in% paste0("hashtag",c(3,4,5))] <- "IL-33"
+GEX.seur$SP.info[GEX.seur$SP.info %in% paste0("hashtag",c(6,7,8))] <- "IL-33_DA"
+GEX.seur$SP.info <- factor(GEX.seur$SP.info,levels = c("PBS",
+                                                       "IL-33",
+                                                       "IL-33_DA"))
+```          
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur, reduction = "umap", label = F,group.by = "SP.info")+
+  DimPlot(GEX.seur, reduction = "umap", label = T)
+```
+
+```{r fig.width=12.6,fig.height=4.5}
+DimPlot(GEX.seur, group.by = "SP.info", split.by = "SP.info", ncol = 3)
+```
+
+```{r}
+table(data.frame(GEX.seur$SP.info,GEX.seur$preAnno_2))
+```
+
+```{r fig.width=8, fig.height=2}
+pheatmap::pheatmap(table(data.frame(GEX.seur$SP.info,GEX.seur$preAnno_2)),
+                   main = "Cell Count",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.0f")
+```
+
+```{r fig.width=8, fig.height=3}
+pheatmap::pheatmap(100*rowRatio(table(data.frame(GEX.seur$SP.info,GEX.seur$preAnno_2))),
+                   main = "Percentage of Sample count(row)",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.2f")
+```
+
+```{r}
+table(data.frame(GEX.seur$SP.info,GEX.seur$preAnno_1))
+```
+
+```{r fig.width=6, fig.height=2}
+pheatmap::pheatmap(table(data.frame(GEX.seur$SP.info,GEX.seur$preAnno_1)),
+                   main = "Cell Count",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.0f")
+```
+
+```{r fig.width=6, fig.height=3}
+pheatmap::pheatmap(100*rowRatio(table(data.frame(GEX.seur$SP.info,GEX.seur$preAnno_1))),
+                   main = "Percentage of Sample count(row)",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.2f")
+```
+
+#### stat without tag3            
+
+```{r}
+GEX.seur
+```
+
+
+```{r}
+GEX.seur_notag3 <- subset(GEX.seur, cells= colnames(GEX.seur)[GEX.seur$FB.info != "hashtag3"])
+GEX.seur_notag3
+```
+
+```{r}
+table(data.frame(GEX.seur_notag3$SP.info,GEX.seur_notag3$preAnno_2))
+```
+
+```{r fig.width=8, fig.height=2}
+pheatmap::pheatmap(table(data.frame(GEX.seur_notag3$SP.info,GEX.seur_notag3$preAnno_2)),
+                   main = "Cell Count (no tag3)",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.0f")
+```
+
+```{r fig.width=8, fig.height=3}
+pheatmap::pheatmap(100*rowRatio(table(data.frame(GEX.seur_notag3$SP.info,GEX.seur_notag3$preAnno_2))),
+                   main = "Percentage of Sample count(row) (no tag3)",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.2f")
+```
+
+```{r}
+table(data.frame(GEX.seur_notag3$SP.info,GEX.seur_notag3$preAnno_1))
+```
+
+```{r fig.width=6, fig.height=2}
+pheatmap::pheatmap(table(data.frame(GEX.seur_notag3$SP.info,GEX.seur_notag3$preAnno_1)),
+                   main = "Cell Count (no tag3)",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.0f")
+```
+
+```{r fig.width=6, fig.height=3}
+pheatmap::pheatmap(100*rowRatio(table(data.frame(GEX.seur_notag3$SP.info,GEX.seur_notag3$preAnno_1))),
+                   main = "Percentage of Sample count(row) (no tag3)",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.2f")
+```
+
+```{r eval=FALSE, include=FALSE}
+saveRDS(GEX.seur,"sc10x.GEX.seur.pre1105.rds")
+```
+
+
+### stat only ILC2         
+add on 1105             
+
+```{r}
+GEX.seur_ILC2 <- subset(GEX.seur, subset = preAnno_1=="ILC2")
+```
+
+#### FB.info      
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur_ILC2, reduction = "umap", label = F,group.by = "FB.info",
+        cols = c("#05BE78","#5ECDF2","#739BDD","#B7E16F","#87C0C9","#7756FA","#9855B9","#6F9920"))+
+  DimPlot(GEX.seur_ILC2, reduction = "umap", label = T)
+```
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur_ILC2, reduction = "umap", label = F,group.by = "FB.info",
+        cols = c("#05BE78","#5ECDF2","#739BDD","#B7E16F","#87C0C9","#7756FA","#9855B9","#6F9920"))+
+  DimPlot(GEX.seur_ILC2, reduction = "umap", label = T, group.by = "preAnno_2")
+```
+
+
+
+```{r fig.width=12,fig.height=6}
+DimPlot(GEX.seur_ILC2, group.by = "FB.info", split.by = "FB.info", ncol = 4,
+        cols = c("#05BE78","#5ECDF2","#739BDD","#B7E16F","#87C0C9","#7756FA","#9855B9","#6F9920"))
+```
+
+```{r}
+GEX.seur_ILC2$FB.info <- as.factor(as.character(GEX.seur_ILC2$FB.info))
+GEX.seur_ILC2$preAnno_2 <- as.factor(as.character(GEX.seur_ILC2$preAnno_2))
+table(data.frame(GEX.seur_ILC2$FB.info,GEX.seur_ILC2$preAnno_2))
+```
+
+```{r fig.width=5, fig.height=4}
+pheatmap::pheatmap(table(data.frame(GEX.seur_ILC2$FB.info,GEX.seur_ILC2$preAnno_2)),
+                   main = "Cell Count",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.0f")
+```
+
+```{r fig.width=5, fig.height=4}
+pheatmap::pheatmap(100*rowRatio(table(data.frame(GEX.seur_ILC2$FB.info,GEX.seur_ILC2$preAnno_2))),
+                   main = "Percentage of Sample count(row)",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.2f")
+```
+
+#### SP.info        
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur_ILC2, reduction = "umap", label = F,group.by = "SP.info")+
+  DimPlot(GEX.seur_ILC2, reduction = "umap", label = T)
+```
+
+```{r fig.width=12,fig.height=4.5}
+DimPlot(GEX.seur_ILC2, reduction = "umap", label = F,group.by = "SP.info")+
+  DimPlot(GEX.seur_ILC2, reduction = "umap", label = T, group.by = "preAnno_2")
+```
+
+```{r fig.width=12.6,fig.height=4.5}
+DimPlot(GEX.seur_ILC2, group.by = "SP.info", split.by = "SP.info", ncol = 3)
+```
+
+```{r}
+table(data.frame(GEX.seur_ILC2$SP.info,GEX.seur_ILC2$preAnno_2))
+```
+
+```{r fig.width=5, fig.height=2}
+pheatmap::pheatmap(table(data.frame(GEX.seur_ILC2$SP.info,GEX.seur_ILC2$preAnno_2)),
+                   main = "Cell Count",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.0f")
+```
+
+```{r fig.width=5, fig.height=3}
+pheatmap::pheatmap(100*rowRatio(table(data.frame(GEX.seur_ILC2$SP.info,GEX.seur_ILC2$preAnno_2))),
+                   main = "Percentage of Sample count(row)",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.2f")
+```
+
+
+#### stat without tag3            
+
+```{r}
+GEX.seur_ILC2
+```
+
+
+```{r}
+GEX.seur_ILC2_notag3 <- subset(GEX.seur_ILC2, cells= colnames(GEX.seur_ILC2)[GEX.seur_ILC2$FB.info != "hashtag3"])
+GEX.seur_ILC2_notag3
+```
+
+```{r}
+table(data.frame(GEX.seur_ILC2_notag3$SP.info,GEX.seur_ILC2_notag3$preAnno_2))
+```
+
+```{r fig.width=5, fig.height=2}
+pheatmap::pheatmap(table(data.frame(GEX.seur_ILC2_notag3$SP.info,GEX.seur_ILC2_notag3$preAnno_2)),
+                   main = "Cell Count (no tag3)",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.0f")
+```
+
+```{r fig.width=5, fig.height=3}
+pheatmap::pheatmap(100*rowRatio(table(data.frame(GEX.seur_ILC2_notag3$SP.info,GEX.seur_ILC2_notag3$preAnno_2))),
+                   main = "Percentage of Sample count(row) (no tag3)",
+                   cluster_rows = F, cluster_cols = F, display_numbers = T, number_format = "%.2f")
+```
+
+### condition markers               
+
+#### preAnno1            
+```{r message=TRUE, warning=TRUE, include=FALSE}
+# find DEGs in all clusters for 'cKO vs CTL'
+Idents(GEX.seur) <- "SP.info"
+
+names_preA1 <- levels(GEX.seur$preAnno_1)
+#GEX.DEGs_preA1 <- list()
+#for(nn in names_preA1){
+#  GEX.DEGs_preA1[[nn]] <- FindAllMarkers(subset(GEX.seur, subset = preAnno_1 == nn),
+#                                         only.pos = TRUE, 
+#                                         min.pct = 0.1, 
+#                                         logfc.threshold = 0.25,
+#                                         test.use = "MAST")
+#}
+#for(nn in names_preA1){
+#  GEX.DEGs_preA1[[nn]]$preAnno_1 <- nn
+#}
+
+GEX.DEGs_preA1 <- readRDS("GEX.DEGs_preA1.rds")
+```
+
+```{r eval=FALSE, include=FALSE}
+# save DEG result
+saveRDS(GEX.DEGs_preA1, "GEX.DEGs_preA1.rds")
+
+# save as datafrmae
+GEX.DEGs_preA1.df <- data.frame()
+for(nn in names_preA1){
+  GEX.DEGs_preA1.df <- rbind(GEX.DEGs_preA1.df,GEX.DEGs_preA1[[nn]])
+}
+#GEX.DEGs_preA1.df
+write.table(data.frame(gene=rownames(GEX.DEGs_preA1.df),
+                       GEX.DEGs_preA1.df), "GEX.DEGs_preA1.csv", col.names = T, row.names = F, quote = F, sep = ",")
+
+```
+
+
+
+```{r}
+lapply(GEX.DEGs_preA1,head)
+```
+```{r}
+lapply(GEX.DEGs_preA1,dim)
+``` 
+
+```{r message=TRUE, warning=TRUE}
+vln_DEGs.preA1 <- list()
+for(nn in names_preA1){
+  pp.test <- VlnPlot(subset(GEX.seur, subset = preAnno_1 == nn), 
+               features = (GEX.DEGs_preA1[[nn]] %>% group_by(cluster) %>% top_n(n = 8, wt = avg_log2FC))$gene[1:48],
+               combine = F)
+  title <- cowplot::ggdraw() + cowplot::draw_label(nn, fontface = 'bold', size = 9)
+  for(pp in 1:length(pp.test)){
+    pp.test[[pp]] <- pp.test[[pp]] + NoLegend()
+  }
+  vln_DEGs.preA1[[nn]] <- cowplot::plot_grid(title = title,plotlist =  pp.test, ncol = 4)
+}
+```
+
+##### top 8 vlnplot           
+
+```{r echo=FALSE, fig.height=15, fig.width=8}
+vln_DEGs.preA1
+```
+
+
+#### preAnno2            
+
+
+```{r message=TRUE, warning=TRUE, include=FALSE}
+# find DEGs in all clusters for 'cKO vs CTL'
+#Idents(GEX.seur) <- "SP.info"
+
+names_preA2 <- levels(GEX.seur$preAnno_2)
+#GEX.DEGs_preA2 <- list()
+#for(nn in names_preA2){
+#  GEX.DEGs_preA2[[nn]] <- FindAllMarkers(subset(GEX.seur, subset = preAnno_2 == nn),
+#                                         only.pos = TRUE, 
+#                                         min.pct = 0.1, 
+#                                         logfc.threshold = 0.25,
+#                                         test.use = "MAST")
+#}
+#for(nn in names_preA2){
+#  GEX.DEGs_preA2[[nn]]$preAnno_2 <- nn
+#}
+
+GEX.DEGs_preA2 <- readRDS("GEX.DEGs_preA2.rds")
+```
+
+```{r eval=FALSE, include=FALSE}
+# save DEG result
+saveRDS(GEX.DEGs_preA2, "GEX.DEGs_preA2.rds")
+
+# save as datafrmae
+GEX.DEGs_preA2.df <- data.frame()
+for(nn in names_preA2){
+  GEX.DEGs_preA2.df <- rbind(GEX.DEGs_preA2.df,GEX.DEGs_preA2[[nn]])
+}
+#GEX.DEGs_preA2.df
+write.table(data.frame(gene=rownames(GEX.DEGs_preA2.df),
+                       GEX.DEGs_preA2.df), "GEX.DEGs_preA2.csv", col.names = T, row.names = F, quote = F, sep = ",")
+
+```
+
+
+
+```{r}
+lapply(GEX.DEGs_preA2,head)
+```
+```{r}
+lapply(GEX.DEGs_preA2,dim)
+``` 
+
+```{r message=TRUE, warning=TRUE}
+vln_DEGs.preA2 <- list()
+for(nn in names_preA2){
+  pp.test <- VlnPlot(subset(GEX.seur, subset = preAnno_2 == nn), 
+               features = (GEX.DEGs_preA2[[nn]] %>% group_by(cluster) %>% top_n(n = 8, wt = avg_log2FC))$gene[1:48],
+               combine = F)
+  title <- cowplot::ggdraw() + cowplot::draw_label(nn, fontface = 'bold', size = 9)
+  for(pp in 1:length(pp.test)){
+    pp.test[[pp]] <- pp.test[[pp]] + NoLegend()
+  }
+  vln_DEGs.preA2[[nn]] <- cowplot::plot_grid(title = title,plotlist =  pp.test, ncol = 4)
+}
+```
+
+##### top 8 vlnplot           
+
+```{r echo=FALSE, fig.height=15, fig.width=8}
+vln_DEGs.preA2
+```
+
+
+
+### condition markers, no tag3                       
+
+#### preAnno1            
+```{r message=TRUE, warning=TRUE, include=FALSE}
+# find DEGs in all clusters for 'cKO vs CTL'
+Idents(GEX.seur_notag3) <- "SP.info"
+
+names_preA1_notag3 <- levels(GEX.seur_notag3$preAnno_1)
+#GEX.DEGs_preA1_notag3 <- list()
+#for(nn in names_preA1_notag3){
+#  GEX.DEGs_preA1_notag3[[nn]] <- FindAllMarkers(subset(GEX.seur_notag3, subset = preAnno_1 == nn),
+#                                         only.pos = TRUE, 
+#                                         min.pct = 0.1, 
+#                                         logfc.threshold = 0.25,
+#                                         test.use = "MAST")
+#}
+#for(nn in names_preA1_notag3){
+#  GEX.DEGs_preA1_notag3[[nn]]$preAnno_1 <- nn
+#}
+
+GEX.DEGs_preA1_notag3 <- readRDS("GEX.DEGs_preA1_notag3.rds")
+```
+
+```{r eval=FALSE, include=FALSE}
+# save DEG result
+saveRDS(GEX.DEGs_preA1_notag3, "GEX.DEGs_preA1_notag3.rds")
+
+# save as datafrmae
+GEX.DEGs_preA1_notag3.df <- data.frame()
+for(nn in names_preA1_notag3){
+  GEX.DEGs_preA1_notag3.df <- rbind(GEX.DEGs_preA1_notag3.df,GEX.DEGs_preA1_notag3[[nn]])
+}
+#GEX.DEGs_preA1_notag3.df
+write.table(data.frame(gene=rownames(GEX.DEGs_preA1_notag3.df),
+                       GEX.DEGs_preA1_notag3.df), "GEX.DEGs_preA1_notag3.csv", col.names = T, row.names = F, quote = F, sep = ",")
+
+```
+
+
+
+```{r}
+lapply(GEX.DEGs_preA1_notag3,head)
+```
+```{r}
+lapply(GEX.DEGs_preA1_notag3,dim)
+``` 
+
+```{r message=TRUE, warning=TRUE}
+vln_DEGs.preA1_notag3 <- list()
+for(nn in names_preA1_notag3){
+  pp.test <- VlnPlot(subset(GEX.seur_notag3, subset = preAnno_1 == nn), 
+               features = (GEX.DEGs_preA1_notag3[[nn]] %>% group_by(cluster) %>% top_n(n = 8, wt = avg_log2FC))$gene[1:48],
+               combine = F)
+  title <- cowplot::ggdraw() + cowplot::draw_label(nn, fontface = 'bold', size = 9)
+  for(pp in 1:length(pp.test)){
+    pp.test[[pp]] <- pp.test[[pp]] + NoLegend()
+  }
+  vln_DEGs.preA1_notag3[[nn]] <- cowplot::plot_grid(title = title,plotlist =  pp.test, ncol = 4)
+}
+```
+
+##### top 8 vlnplot           
+
+```{r echo=FALSE, fig.height=15, fig.width=8}
+vln_DEGs.preA1_notag3
+```
+
+
+#### preAnno2            
+
+
+```{r message=TRUE, warning=TRUE, include=FALSE}
+# find DEGs in all clusters for 'cKO vs CTL'
+Idents(GEX.seur_notag3) <- "SP.info"
+
+names_preA2_notag3 <- levels(GEX.seur_notag3$preAnno_2)
+#GEX.DEGs_preA2_notag3 <- list()
+#for(nn in names_preA2_notag3){
+#  GEX.DEGs_preA2_notag3[[nn]] <- FindAllMarkers(subset(GEX.seur_notag3, subset = preAnno_2 == nn),
+#                                         only.pos = TRUE, 
+#                                         min.pct = 0.1, 
+#                                         logfc.threshold = 0.25,
+#                                         test.use = "MAST")
+#}
+#for(nn in names_preA2_notag3){
+#  GEX.DEGs_preA2_notag3[[nn]]$preAnno_2 <- nn
+#}
+
+GEX.DEGs_preA2_notag3 <- readRDS("GEX.DEGs_preA2_notag3.rds")
+```
+
+```{r eval=FALSE, include=FALSE}
+# save DEG result
+saveRDS(GEX.DEGs_preA2_notag3, "GEX.DEGs_preA2_notag3.rds")
+
+# save as datafrmae
+GEX.DEGs_preA2_notag3.df <- data.frame()
+for(nn in names_preA2_notag3){
+  GEX.DEGs_preA2_notag3.df <- rbind(GEX.DEGs_preA2_notag3.df,GEX.DEGs_preA2_notag3[[nn]])
+}
+#GEX.DEGs_preA2_notag3.df
+write.table(data.frame(gene=rownames(GEX.DEGs_preA2_notag3.df),
+                       GEX.DEGs_preA2_notag3.df), "GEX.DEGs_preA2_notag3.csv", col.names = T, row.names = F, quote = F, sep = ",")
+
+```
+
+
+
+```{r}
+lapply(GEX.DEGs_preA2_notag3,head)
+```
+```{r}
+lapply(GEX.DEGs_preA2_notag3,dim)
+``` 
+
+```{r message=TRUE, warning=TRUE}
+vln_DEGs.preA2_notag3 <- list()
+for(nn in names_preA2_notag3){
+  pp.test <- VlnPlot(subset(GEX.seur_notag3, subset = preAnno_2 == nn), 
+               features = (GEX.DEGs_preA2_notag3[[nn]] %>% group_by(cluster) %>% top_n(n = 8, wt = avg_log2FC))$gene[1:48],
+               combine = F)
+  title <- cowplot::ggdraw() + cowplot::draw_label(nn, fontface = 'bold', size = 9)
+  for(pp in 1:length(pp.test)){
+    pp.test[[pp]] <- pp.test[[pp]] + NoLegend()
+  }
+  vln_DEGs.preA2_notag3[[nn]] <- cowplot::plot_grid(title = title,plotlist =  pp.test, ncol = 4)
+}
+```
+
+##### top 8 vlnplot           
+
+```{r echo=FALSE, fig.height=15, fig.width=8}
+vln_DEGs.preA2_notag3
+```
+
+## check 1108               
+
+```{r}
+GEX.seur <- readRDS("sc10x.GEX.seur.pre1105.rds")
+```
+
+
+```{r}
+genes.1118 <- c("Gata3",paste0("Drd",1:5))
+genes.1118
+genes.1118 %in% rownames(GEX.seur)
+```
+
+
+```{r fig.width=6, fig.height=3}
+FeaturePlot(GEX.seur, features = genes.1118)
+```
+
+
+
+
+
+
+
+
+
+
+
+
